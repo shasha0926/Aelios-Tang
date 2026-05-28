@@ -327,7 +327,7 @@ Model:      companion
 | `ENABLE_MEMORY_RERANKER` | `true` | 设 `false` 跳过 reranker，直接按向量分数进入压缩 |
 | `MEMORY_FILTER_MODEL` | `workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast` | 记忆压缩模型，只负责把 reranker 选出的记忆压短 |
 | `MEMORY_FILTER_MAX_CANDIDATES` | `12` | 进入 reranker 的候选记忆上限 |
-| `MEMORY_FILTER_MAX_OUTPUT` | `4` | reranker 选出并交给压缩模型的记忆上限 |
+| `MEMORY_FILTER_MAX_OUTPUT` | `5` | reranker 选出并交给压缩模型的记忆上限 |
 | `MEMORY_FILTER_OUTPUT_CHARS` | `300` | 压缩模型每条返回内容最多多少字 |
 | `MEMORY_FILTER_MAX_TOKENS` | `1400` | 压缩模型 JSON 输出上限，避免多条压缩结果被截断 |
 | `DREAM_MODEL` | 同 `SUMMARY_MODEL` | 夜间 dream 模型，负责整理 transcript 和旧记忆，合并重复、修正过时记忆 |
@@ -356,7 +356,7 @@ Model:      companion
 |--------|--------|------|
 | `IM_API_KEY` | 空 | 第二把钥匙（IM bot 用） |
 | `DEBUG_API_KEY` | 空 | 调试接口钥匙 |
-| `MEMORY_TOP_K` | `12` | 记忆搜索返回条数 |
+| `MEMORY_TOP_K` | `50` | 向量粗召回条数；默认多召回，再由 reranker 缩减到 `MEMORY_FILTER_MAX_OUTPUT` |
 | `MEMORY_MIN_SCORE` | `0.35` | 记忆搜索最低相关度 |
 | `MEMORY_FILTER_MIN_SCORE` | `0.35` | 进入 reranker 前的最低向量相关度；不填时跟随 `MEMORY_MIN_SCORE` |
 | `MEMORY_FILTER_MAX_CONTENT_CHARS` | `700` | 交给 reranker/压缩模型前，每条候选最多保留多少字 |

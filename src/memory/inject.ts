@@ -32,8 +32,8 @@ function resolveInjectionMode(profile: KeyProfile, env: Env): InjectionMode {
 }
 
 function getTopK(env: Env): number {
-  const value = Number(env.MEMORY_TOP_K || 12);
-  return Number.isFinite(value) ? Math.min(Math.max(value, 1), 200) : 12;
+  const value = Number(env.MEMORY_TOP_K || 50);
+  return Number.isFinite(value) ? Math.min(Math.max(value, 1), 200) : 50;
 }
 
 async function searchMemoriesForInjection(

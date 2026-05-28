@@ -100,8 +100,8 @@ function getMaxCandidates(env: Env): number {
 }
 
 function getMaxOutput(env: Env): number {
-  const value = Number(env.MEMORY_FILTER_MAX_OUTPUT || 6);
-  return Number.isFinite(value) ? clamp(Math.floor(value), 1, 20) : 6;
+  const value = Number(env.MEMORY_FILTER_MAX_OUTPUT || 5);
+  return Number.isFinite(value) ? clamp(Math.floor(value), 1, 20) : 5;
 }
 
 function getMaxContentChars(env: Env): number {

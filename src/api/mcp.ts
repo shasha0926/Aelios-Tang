@@ -197,7 +197,7 @@ async function callTool(
     const memories = await searchVectorMemories(env, {
       namespace: resolveNamespace(profile, args.namespace),
       query,
-      topK: readNumber(args.top_k, Number(env.MEMORY_TOP_K || 12)),
+      topK: readNumber(args.top_k, Number(env.MEMORY_TOP_K || 50)),
       types: readStringArray(args.types)
     });
     const data = await filterAndCompressMemories(env, { query, memories });
