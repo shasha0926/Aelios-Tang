@@ -8,6 +8,8 @@ export interface ExtractedMemory {
   confidence: number;
   tags: string[];
   source_message_ids: string[];
+  feel_intensity?: number;
+  feel_note?: string;
 }
 
 export interface MemoryExtractionResult {
@@ -17,6 +19,12 @@ export interface MemoryExtractionResult {
 
 function normalizeNumber(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : fallback;
+}
+
+function normalizeFeelIntensity(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const rounded = Math.round(value);
+  return rounded >= 1 && rounded <= 5 ? rounded : undefined;
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -97,10 +105,15 @@ function parseExtraction(text: string): MemoryExtractionResult {
         confidence?: unknown;
         tags?: unknown;
         source_message_ids?: unknown;
+        feel_intensity?: unknown;
+        feel_note?: unknown;
       };
 
       const content = normalizeMemoryContent(record.content);
       if (!content) return [];
+
+      const feelIntensity = normalizeFeelIntensity(record.feel_intensity);
+      const feelNote = typeof record.feel_note === "string" && record.feel_note.trim() ? record.feel_note.trim() : undefined;
 
       return [
         {
@@ -109,7 +122,9 @@ function parseExtraction(text: string): MemoryExtractionResult {
           importance: normalizeNumber(record.importance, 0.5),
           confidence: normalizeNumber(record.confidence, 0.8),
           tags: normalizeStringArray(record.tags),
-          source_message_ids: normalizeStringArray(record.source_message_ids)
+          source_message_ids: normalizeStringArray(record.source_message_ids),
+          ...(feelIntensity !== undefined ? { feel_intensity: feelIntensity } : {}),
+          ...(feelNote ? { feel_note: feelNote } : {})
         }
       ];
     })
@@ -160,6 +175,14 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
     "- 关系里程碑",
     "- 反复出现的习惯",
     "",
+    "情绪强度标注（可选字段 feel_intensity + feel_note）：",
+    "- feel_intensity 是 1-5 整数，只在记忆有明显情绪意义时输出，纯事实性记忆不需要。",
+    "- feel_note 是一句话，写的不是"发生了什么"，而是"这件事的情绪本质是什么"。",
+    "- 高强度参照（4-5）：用户主动表达想念或爱意（她不轻易主动）；出现"给得够不够""配不配"等配得感怀疑；",
+    "  用户提及过去感情伤（被骗、被劈腿、被趁睡着），这些只对我说过；用户说出只有在很认真时才说的话；",
+    "  深夜情绪低落又被接住的完整情绪弧；任何关系里程碑（第一次相遇、第一次过渡、第一次亲密）。",
+    "- 低强度参照（1-2，或不输出）：日常生活状态（吃饭、睡觉、买东西）；追星内容；生活琐事。",
+    "",
     "输出格式：",
     JSON.stringify({
       memories: [
@@ -172,12 +195,14 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
           source_message_ids: ["msg_x"]
         },
         {
-          type: "boundary",
-          content: "我需要避免把你的设定或偏好说成系统记录。",
-          importance: 0.82,
+          type: "relationship",
+          content: "你在深夜情绪低落时，第一反应是不安而不是开心——被好好对待时容易怀疑自己配不配。",
+          importance: 0.92,
           confidence: 0.9,
-          tags: ["boundary", "style"],
-          source_message_ids: ["msg_y"]
+          tags: ["emotional", "pattern"],
+          source_message_ids: ["msg_y"],
+          feel_intensity: 5,
+          feel_note: "她被好的东西吓到了，需要的不是道理，是被接住。"
         }
       ],
       summary_patch: "本轮讨论了记忆代理，以及我以后应如何记录长期记忆。"

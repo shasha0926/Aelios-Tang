@@ -201,6 +201,9 @@ export interface MemoryRecord {
   created_at: string;
   updated_at: string;
   expires_at: string | null;
+  feel_intensity: number | null;
+  feel_resolved: number;
+  feel_note: string | null;
 }
 
 export interface MemoryApiRecord {
@@ -222,6 +225,9 @@ export interface MemoryApiRecord {
   created_at: string;
   updated_at: string;
   expires_at: string | null;
+  feel_intensity: number | null;
+  feel_resolved: boolean;
+  feel_note: string | null;
   score?: number;
 }
 

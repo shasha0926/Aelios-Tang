@@ -1,0 +1,3 @@
+ALTER TABLE memories ADD COLUMN feel_intensity INTEGER;
+ALTER TABLE memories ADD COLUMN feel_resolved INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE memories ADD COLUMN feel_note TEXT;

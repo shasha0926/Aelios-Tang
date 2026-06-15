@@ -17,6 +17,9 @@ export interface VectorMemoryInput {
   source?: string | null;
   sourceMessageIds?: string[];
   expiresAt?: string | null;
+  feelIntensity?: number | null;
+  feelResolved?: boolean;
+  feelNote?: string | null;
 }
 
 export interface VectorMemoryPatch {
@@ -31,6 +34,9 @@ export interface VectorMemoryPatch {
   source?: string | null;
   sourceMessageIds?: string[];
   expiresAt?: string | null;
+  feelIntensity?: number | null;
+  feelResolved?: boolean;
+  feelNote?: string | null;
 }
 
 export interface VectorMemorySearchInput {
@@ -81,6 +87,12 @@ function parseStringArray(value: unknown): string[] {
   return [value.trim()];
 }
 
+function readFeelIntensity(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  return rounded >= 1 && rounded <= 5 ? rounded : null;
+}
+
 function toMetadata(input: Required<VectorMemoryInput> & { id: string; vectorId: string; createdAt: string; updatedAt: string; status?: string }): Record<string, VectorizeVectorMetadata> {
   return {
     kind: "memory",
@@ -98,7 +110,10 @@ function toMetadata(input: Required<VectorMemoryInput> & { id: string; vectorId:
     source_message_ids: JSON.stringify(input.sourceMessageIds),
     created_at: input.createdAt,
     updated_at: input.updatedAt,
-    expires_at: input.expiresAt || ""
+    expires_at: input.expiresAt || "",
+    feel_intensity: input.feelIntensity ?? 0,
+    feel_resolved: input.feelResolved ?? false,
+    feel_note: input.feelNote ?? ""
   };
 }
 
@@ -135,6 +150,9 @@ export function vectorMetadataToMemoryRecord(
     created_at: readString(metadata.created_at) || now,
     updated_at: readString(metadata.updated_at) || readString(metadata.created_at) || now,
     expires_at: readString(metadata.expires_at),
+    feel_intensity: readFeelIntensity(metadata.feel_intensity),
+    feel_resolved: readBoolean(metadata.feel_resolved),
+    feel_note: readString(metadata.feel_note),
     ...(score === undefined ? {} : { score })
   };
 }
@@ -207,6 +225,9 @@ export async function createVectorMemory(env: Env, input: VectorMemoryInput): Pr
     source: input.source ?? null,
     sourceMessageIds: input.sourceMessageIds ?? [],
     expiresAt: input.expiresAt ?? null,
+    feelIntensity: input.feelIntensity ?? null,
+    feelResolved: input.feelResolved ?? false,
+    feelNote: input.feelNote ?? null,
     id,
     vectorId,
     createdAt: now,
@@ -240,7 +261,10 @@ export async function createVectorMemory(env: Env, input: VectorMemoryInput): Pr
     recall_count: 0,
     created_at: now,
     updated_at: now,
-    expires_at: normalized.expiresAt
+    expires_at: normalized.expiresAt,
+    feel_intensity: normalized.feelIntensity,
+    feel_resolved: normalized.feelResolved,
+    feel_note: normalized.feelNote
   };
 }
 
@@ -282,6 +306,9 @@ export async function deleteVectorMemory(env: Env, id: string): Promise<boolean>
             source: existing.source ?? null,
             sourceMessageIds: existing.source_message_ids,
             expiresAt: existing.expires_at ?? null,
+            feelIntensity: existing.feel_intensity ?? null,
+            feelResolved: existing.feel_resolved ?? false,
+            feelNote: existing.feel_note ?? null,
             id: existing.id,
             vectorId: existing.vector_id,
             createdAt: existing.created_at,
@@ -326,6 +353,9 @@ export async function updateVectorMemory(
     source: patch.source === undefined ? existing.source : patch.source,
     sourceMessageIds: patch.sourceMessageIds ?? existing.source_message_ids,
     expiresAt: patch.expiresAt === undefined ? existing.expires_at : patch.expiresAt,
+    feelIntensity: patch.feelIntensity === undefined ? (existing.feel_intensity ?? null) : patch.feelIntensity,
+    feelResolved: patch.feelResolved === undefined ? (existing.feel_resolved ?? false) : patch.feelResolved,
+    feelNote: patch.feelNote === undefined ? existing.feel_note : patch.feelNote,
     id: existing.id,
     vectorId,
     createdAt: existing.created_at,
@@ -354,6 +384,9 @@ export async function updateVectorMemory(
     source: next.source,
     source_message_ids: next.sourceMessageIds,
     expires_at: next.expiresAt,
+    feel_intensity: next.feelIntensity,
+    feel_resolved: next.feelResolved,
+    feel_note: next.feelNote,
     updated_at: updatedAt,
     vector_id: vectorId
   };

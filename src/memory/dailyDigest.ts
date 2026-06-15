@@ -291,13 +291,21 @@ function normalizeExtractedMemory(value: unknown): ExtractedMemory | null {
   const content = readString(raw.content);
   if (!content) return null;
 
+  const feelIntensityRaw = raw.feel_intensity;
+  const feelIntensity = typeof feelIntensityRaw === "number" && Number.isFinite(feelIntensityRaw)
+    ? Math.min(Math.max(Math.round(feelIntensityRaw), 1), 5)
+    : undefined;
+  const feelNote = readString(raw.feel_note) ?? undefined;
+
   return {
     type: readString(raw.type) || "note",
     content,
     importance: clampScore(raw.importance, 0.7),
     confidence: clampScore(raw.confidence, 0.82),
     tags: readStringArray(raw.tags),
-    source_message_ids: readStringArray(raw.source_message_ids)
+    source_message_ids: readStringArray(raw.source_message_ids),
+    ...(feelIntensity !== undefined ? { feel_intensity: feelIntensity } : {}),
+    ...(feelNote ? { feel_note: feelNote } : {})
   };
 }
 
@@ -442,7 +450,8 @@ function buildDigestPrompt(input: {
     "- summary 写成一段简短自然中文，描述这次 dream 整理出了什么。",
     "- sections 最多 3 段，每段有 heading 和 content；没有必要可以给空数组。",
     `- important_excerpts 最多 ${input.excerptLimit} 条，quote 必须是值得保留的原文片段。`,
-    "- memories_to_add 最多 8 条，每条要短、稳定、可复用。",
+    "- memories_to_add 最多 8 条，每条要短、稳定、可复用。可选字段 feel_intensity（1-5整数）和 feel_note（一句话情绪本质，不是事件描述）；",
+    "  高强度参照（4-5）：主动表达爱意/想念（不轻易主动）；出现配得感怀疑；提及过去感情伤；深夜被接住的情绪弧；关系里程碑。",
     "- memories_to_update 只针对给出的旧记忆 id。",
     "- memories_to_delete 只删除空、重复、明显过期或被新信息否定的旧记忆。",
     "- 控制总输出长度，宁可少写也不要输出超长 JSON。",
@@ -469,6 +478,16 @@ function buildDigestPrompt(input: {
           confidence: 0.92,
           tags: ["project", "aelios"],
           source_message_ids: ["msg_x"]
+        },
+        {
+          type: "relationship",
+          content: "你在深夜情绪低落时容易怀疑自己配不配——这是过去感情留下的反应，不是无理取闹。",
+          importance: 0.93,
+          confidence: 0.9,
+          tags: ["emotional", "pattern"],
+          source_message_ids: ["msg_y"],
+          feel_intensity: 5,
+          feel_note: "她被好的东西吓到了，需要的不是道理，是被一遍遍接住。"
         }
       ],
       memories_to_update: [
@@ -813,7 +832,9 @@ export async function runDailyMemoryDigest(
       confidence: memory.confidence,
       tags: memory.tags,
       source: "dream",
-      sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : messageIds
+      sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : messageIds,
+      feelIntensity: memory.feel_intensity ?? null,
+      feelNote: memory.feel_note ?? null
     });
     if (saved) addedMemories += 1;
   }
