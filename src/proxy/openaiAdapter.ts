@@ -62,6 +62,32 @@ export function buildOpenAICompatHeaders(env: Env): Headers {
 }
 
 export async function callOpenAICompat(env: Env, body: OpenAIChatRequest): Promise<Response> {
+  if (body.model?.startsWith("workers-ai/") && env.AI) {
+    const modelId = body.model.slice("workers-ai/".length);
+    try {
+      const result = await (env.AI as any).run(modelId, {
+        messages: body.messages as any[],
+        temperature: body.temperature ?? 0,
+        max_tokens: body.max_tokens ?? 2000,
+        stream: false
+      });
+      const text = typeof result === "object" && result !== null
+        ? ((result as any).response ?? JSON.stringify(result))
+        : String(result);
+      const wrapped = {
+        id: "workers-ai",
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: body.model,
+        choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      };
+      return new Response(JSON.stringify(wrapped), { status: 200, headers: { "content-type": "application/json" } });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), { status: 503, headers: { "content-type": "application/json" } });
+    }
+  }
   return fetch(getOpenAICompatUrl(env), {
     method: "POST",
     headers: buildOpenAICompatHeaders(env),

@@ -86,14 +86,15 @@ function getTools(): Array<Record<string, unknown>> {
   return [
     {
       name: "memory_search",
-      description: "Search the user's long-term memory library.",
+      description: "Search the user's long-term memory library. Returns id/type/summary/tags/feel by default — use memory_get(id) to fetch the full text of a specific result. Pass full:true only when you specifically need full content for all results.",
       inputSchema: {
         type: "object",
         properties: {
           query: { type: "string" },
           top_k: { type: "number", minimum: 1, maximum: 50 },
           types: { type: "array", items: { type: "string" } },
-          namespace: { type: "string" }
+          namespace: { type: "string" },
+          full: { type: "boolean", description: "Set true to return full content for all results. Omit or false to get compact summaries only." }
         },
         required: ["query"]
       }
@@ -119,11 +120,11 @@ function getTools(): Array<Record<string, unknown>> {
     },
     {
       name: "memory_list",
-      description: "List memories from the user's memory library.",
+      description: "List memories by type or cursor. Default limit is 5 — do not raise it without a specific reason. Prefer memory_search for finding relevant memories. Returns compact summaries only.",
       inputSchema: {
         type: "object",
         properties: {
-          limit: { type: "number", minimum: 1, maximum: 1000 },
+          limit: { type: "number", minimum: 1, maximum: 20 },
           cursor: { type: "string" },
           include_ids: { type: "boolean" },
           type: { type: "string" },
@@ -201,6 +202,20 @@ async function callTool(
       types: readStringArray(args.types)
     });
     const data = await filterAndCompressMemories(env, { query, memories });
+    if (!readBoolean(args.full)) {
+      return textToolResult({
+        data: data.map((m) => ({
+          id: m.id,
+          type: m.type,
+          summary: m.summary || m.content.slice(0, 80),
+          tags: m.tags,
+          feel_intensity: m.feel_intensity,
+          feel_note: m.feel_note,
+          created_at: m.created_at,
+          score: m.score
+        }))
+      });
+    }
     return textToolResult({ data });
   }
 
@@ -230,15 +245,24 @@ async function callTool(
 
   if (params.name === "memory_list") {
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
-    const limit = readPositiveInt(args.limit, 100, 1000);
+    const limit = readPositiveInt(args.limit, 5, 20);
     try {
       const page = await listVectorMemories(env, {
         namespace: resolveNamespace(profile, args.namespace),
         count: limit,
         cursor: readString(args.cursor)
       });
+      const records = page.data.map((m) => ({
+        id: m.id,
+        type: m.type,
+        summary: m.summary || m.content.slice(0, 80),
+        tags: m.tags,
+        feel_intensity: m.feel_intensity,
+        feel_note: m.feel_note,
+        created_at: m.created_at
+      }));
       return textToolResult({
-        data: page.data,
+        data: records,
         ...(readBoolean(args.include_ids) ? { ids: page.ids } : {}),
         paging: {
           limit,
