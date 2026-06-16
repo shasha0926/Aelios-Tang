@@ -158,6 +158,19 @@ function getTools(): Array<Record<string, unknown>> {
       }
     },
     {
+      name: "memory_wakeup",
+      description: "Cold-start for a new conversation. Call this FIRST before chatting. Returns anchor memories (relationship context, rules, identity) + recent context memories in compact format. No need to search separately — this is the one-call wake-up.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          context_hint: {
+            type: "string",
+            description: "Optional: what this conversation is likely about. Helps surface more relevant recent memories."
+          }
+        }
+      }
+    },
+    {
       name: "memory_ingest",
       description: "Save chat messages and optionally extract memories from them.",
       inputSchema: {
@@ -192,6 +205,52 @@ async function callTool(
   params: ToolCallParams
 ): Promise<Record<string, unknown>> {
   const args = isRecord(params.arguments) ? params.arguments : {};
+
+  if (params.name === "memory_wakeup") {
+    if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
+    const namespace = resolveNamespace(profile, args.namespace);
+    const contextHint = readString(args.context_hint) || "最近 生活 情绪 工作 日常";
+
+    const [anchorRaw, contextRaw] = await Promise.all([
+      searchVectorMemories(env, {
+        namespace,
+        query: "莎莎 哥哥 棠 关系 身份 规则 重要 情感",
+        topK: 8,
+        types: ["relationship", "lingo", "note", "insight", "emotion", "event"]
+      }),
+      searchVectorMemories(env, {
+        namespace,
+        query: contextHint,
+        topK: 6
+      })
+    ]);
+
+    const [anchorFiltered, contextFiltered] = await Promise.all([
+      filterAndCompressMemories(env, { query: "关系 身份 规则", memories: anchorRaw }),
+      filterAndCompressMemories(env, { query: contextHint, memories: contextRaw })
+    ]);
+
+    const anchorIds = new Set(anchorFiltered.map((m) => m.id));
+    const contextDeduped = contextFiltered.filter((m) => !anchorIds.has(m.id));
+
+    const compact = (list: typeof anchorFiltered) =>
+      list.map((m) => ({
+        id: m.id,
+        type: m.type,
+        summary: m.summary || m.content.slice(0, 80),
+        tags: m.tags,
+        feel_intensity: m.feel_intensity,
+        feel_note: m.feel_note,
+        created_at: m.created_at,
+        pinned: m.pinned
+      }));
+
+    return textToolResult({
+      anchor: compact(anchorFiltered),
+      context: compact(contextDeduped),
+      hint: "Use memory_get(id) for full content of any item. Use memory_search for topic-specific lookup."
+    });
+  }
 
   if (params.name === "memory_search") {
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
