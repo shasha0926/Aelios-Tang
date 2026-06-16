@@ -213,6 +213,56 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
   ].join("\n");
 }
 
+export async function generateChunkSummary(
+  env: Env,
+  content: string
+): Promise<{ summary: string; tags: string[] } | null> {
+  const model = env.MEMORY_FILTER_MODEL || env.DREAM_MODEL;
+  if (!model) return null;
+
+  const prompt = [
+    "分析下面这段对话，返回 JSON，只输出 JSON 不要解释。",
+    "",
+    '格式：{ "summary": "一句话摘要（15-25字中文，说清楚聊了什么）", "tags": ["标签1","标签2","标签3"] }',
+    "",
+    "要求：",
+    "- summary 是这段对话的内容方向，不是对话双方的名字",
+    "- tags 提取人名、话题、情绪词，3-5个",
+    "",
+    "对话：",
+    content.slice(0, 1200)
+  ].join("\n");
+
+  const request: OpenAIChatRequest = {
+    model,
+    messages: [
+      { role: "system", content: "你是 JSON 生成器，只输出 JSON。" },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0,
+    max_tokens: 200,
+    stream: false
+  };
+
+  try {
+    const response = await callOpenAICompat(env, request);
+    if (!response.ok) return null;
+    const parsed = (await response.json()) as OpenAIChatResponse;
+    const text = typeof parsed.choices?.[0]?.message?.content === "string"
+      ? parsed.choices[0].message.content.trim()
+      : "";
+    const obj = extractJsonObject(text);
+    if (!obj || typeof obj !== "object") return null;
+    const r = obj as { summary?: unknown; tags?: unknown };
+    const summary = typeof r.summary === "string" && r.summary.trim() ? r.summary.trim() : null;
+    const tags = normalizeStringArray(r.tags);
+    if (!summary) return null;
+    return { summary, tags };
+  } catch {
+    return null;
+  }
+}
+
 export async function extractMemoriesFromMessages(
   env: Env,
   messages: MessageRecord[]

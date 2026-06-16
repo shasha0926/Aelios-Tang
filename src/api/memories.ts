@@ -3,6 +3,7 @@ import { requireScope } from "../auth/scopes";
 import { getOrCreateConversation } from "../db/conversations";
 import { saveIngestMessages } from "../db/messages";
 import { runDailyMemoryDigest } from "../memory/dailyDigest";
+import { generateChunkSummary } from "../memory/extract";
 import { filterAndCompressMemoriesWithMeta } from "../memory/filter";
 import { formatMemoryPatch } from "../memory/inject";
 import { searchMemories } from "../memory/search";
@@ -47,17 +48,28 @@ async function handleCreateMemory(
     return openAiError("content is required", 400);
   }
 
+  let summary = readOptionalString(body.summary);
+  let tags = readStringArray(body.tags);
+
+  if (readBoolean(body.auto_summary)) {
+    const generated = await generateChunkSummary(env, content);
+    if (generated) {
+      summary = generated.summary;
+      tags = [...new Set([...tags, ...generated.tags])];
+    }
+  }
+
   let memory;
   try {
     memory = await createVectorMemory(env, {
       namespace: resolveNamespace(profile, body.namespace),
       type,
       content,
-      summary: readOptionalString(body.summary),
+      summary,
       importance: readNumber(body.importance, 0.5),
       confidence: readNumber(body.confidence, 0.8),
       pinned: readBoolean(body.pinned),
-      tags: readStringArray(body.tags),
+      tags,
       source: readOptionalString(body.source) || profile.source,
       sourceMessageIds: readStringArray(body.source_message_ids),
       expiresAt: readOptionalString(body.expires_at)

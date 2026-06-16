@@ -1,6 +1,7 @@
 import { authenticate } from "../auth/apiKey";
 import { getOrCreateConversation } from "../db/conversations";
 import { saveIngestMessages } from "../db/messages";
+import { generateChunkSummary } from "../memory/extract";
 import { filterAndCompressMemories } from "../memory/filter";
 import {
   createVectorMemory,
@@ -108,6 +109,7 @@ function getTools(): Array<Record<string, unknown>> {
           content: { type: "string" },
           type: { type: "string" },
           summary: { type: "string" },
+          auto_summary: { type: "boolean", description: "Set true to auto-generate summary and tags via AI if not provided." },
           importance: { type: "number" },
           confidence: { type: "number" },
           pinned: { type: "boolean" },
@@ -223,17 +225,29 @@ async function callTool(
     if (!hasScope(profile, "memory:write")) return toolError("Missing memory:write scope");
     const content = readString(args.content);
     if (!content) return toolError("content is required");
+
+    let summary = readString(args.summary) || null;
+    let tags = readStringArray(args.tags);
+
+    if (readBoolean(args.auto_summary)) {
+      const generated = await generateChunkSummary(env, content);
+      if (generated) {
+        summary = generated.summary;
+        tags = [...new Set([...tags, ...generated.tags])];
+      }
+    }
+
     let memory;
     try {
       memory = await createVectorMemory(env, {
         namespace: resolveNamespace(profile, args.namespace),
         type: readString(args.type) || "note",
         content,
-        summary: readString(args.summary) || null,
+        summary,
         importance: readNumber(args.importance, 0.5),
         confidence: readNumber(args.confidence, 0.8),
         pinned: readBoolean(args.pinned),
-        tags: readStringArray(args.tags),
+        tags,
         source: readString(args.source) || "mcp",
         sourceMessageIds: []
       });
