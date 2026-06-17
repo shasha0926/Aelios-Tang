@@ -856,20 +856,26 @@ export async function runDailyMemoryDigest(
   }
 
   const maxMessages = readDreamMaxMessages(env);
-  const messages = await listMessagesByNamespaceInRange(env.DB, {
+  // 多捞一条探边界：真没有下一条时，最后一批才能正确地报 hasMore=false，
+  // 从而写出当天 summary + diary。否则当天条数恰为 maxMessages 整数倍时，
+  // 末批会捞满、hasMore 仍为 true，下一批捞到 0 直接 no_messages 收口，
+  // summary/diary 永远不写。
+  const fetched = await listMessagesByNamespaceInRange(env.DB, {
     namespace,
     startCreatedAt: startIso,
     endCreatedAt: endIso,
     afterCreatedAt: cursorState.after,
-    limit: maxMessages
+    limit: maxMessages + 1
   });
-  if (messages.length === 0) {
+  if (fetched.length === 0) {
     await writeCursor(env.DB, cursorName, `done:${cursorState.after ?? startIso}`);
     return { ran: false, mode: "dream", date: dateLabel, reason: "no_messages", startIso, endIso, cursor };
   }
+  const hasMoreAfterThisBatch = fetched.length > maxMessages;
+  const messages = hasMoreAfterThisBatch ? fetched.slice(0, maxMessages) : fetched;
 
   const lastMessage = messages[messages.length - 1];
-  const hasMore = messages.length >= maxMessages;
+  const hasMore = hasMoreAfterThisBatch;
   const memoryContextLimit = readDreamMemoryContextLimit(env);
   let existingMemories: MemoryApiRecord[] = [];
   try {
