@@ -8,7 +8,8 @@ import {
   deleteVectorMemory,
   getVectorMemory,
   listVectorMemories,
-  searchVectorMemories
+  searchVectorMemories,
+  updateVectorMemory
 } from "../memory/vectorStore";
 import { enqueueMemoryMaintenanceIfNeeded } from "../queue/producer";
 import type { Env, KeyProfile, Scope } from "../types";
@@ -123,14 +124,14 @@ function getTools(): Array<Record<string, unknown>> {
     },
     {
       name: "memory_list",
-      description: "List memories by type or cursor. Default limit is 5 — do not raise it without a specific reason. Prefer memory_search for finding relevant memories. Returns compact summaries only.",
+      description: "List memories by type or cursor. Default limit is 5. To read the daily timeline (summaries + diaries), pass type='daily_summary' or type='diary' with a higher limit. Prefer memory_search for finding relevant memories. Returns compact summaries only.",
       inputSchema: {
         type: "object",
         properties: {
-          limit: { type: "number", minimum: 1, maximum: 20 },
+          limit: { type: "number", minimum: 1, maximum: 50 },
           cursor: { type: "string" },
           include_ids: { type: "boolean" },
-          type: { type: "string" },
+          type: { type: "string", description: "Filter by memory type, e.g. 'daily_summary', 'diary', 'relationship'." },
           status: { type: "string" },
           namespace: { type: "string" }
         }
@@ -169,6 +170,23 @@ function getTools(): Array<Record<string, unknown>> {
             description: "Optional: what this conversation is likely about. Helps surface more relevant recent memories."
           }
         }
+      }
+    },
+    {
+      name: "memory_update",
+      description: "Update (patch) an existing memory by id. Use to edit a diary entry or correct any stored memory.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          content: { type: "string" },
+          type: { type: "string" },
+          summary: { type: "string" },
+          tags: { type: "array", items: { type: "string" } },
+          pinned: { type: "boolean" },
+          namespace: { type: "string" }
+        },
+        required: ["id"]
       }
     },
     {
@@ -212,7 +230,7 @@ async function callTool(
     const namespace = resolveNamespace(profile, args.namespace);
     const contextHint = readString(args.context_hint) || "最近 生活 情绪 工作 日常";
 
-    const [anchorRaw, contextRaw] = await Promise.all([
+    const [anchorRaw, contextRaw, listedPage] = await Promise.all([
       searchVectorMemories(env, {
         namespace,
         query: "莎莎 哥哥 棠 关系 身份 规则 重要 情感",
@@ -223,15 +241,23 @@ async function callTool(
         namespace,
         query: contextHint,
         topK: 6
-      })
+      }),
+      listVectorMemories(env, { namespace, count: 50 })
     ]);
+
+    // Pinned entries (soul layer) always appear in anchor — bypass semantic filter
+    const pinnedEntries = listedPage.data.filter((m) => m.pinned).slice(0, 10);
+    const pinnedIds = new Set(pinnedEntries.map((m) => m.id));
+    const anchorWithoutPinned = anchorRaw.filter((m) => !pinnedIds.has(m.id));
+    const contextWithoutPinned = contextRaw.filter((m) => !pinnedIds.has(m.id));
 
     const [anchorFiltered, contextFiltered] = await Promise.all([
-      filterAndCompressMemories(env, { query: "关系 身份 规则", memories: anchorRaw }),
-      filterAndCompressMemories(env, { query: contextHint, memories: contextRaw })
+      filterAndCompressMemories(env, { query: "关系 身份 规则", memories: anchorWithoutPinned }),
+      filterAndCompressMemories(env, { query: contextHint, memories: contextWithoutPinned })
     ]);
 
-    const anchorIds = new Set(anchorFiltered.map((m) => m.id));
+    const allAnchor = [...pinnedEntries, ...anchorFiltered];
+    const anchorIds = new Set(allAnchor.map((m) => m.id));
     const contextDeduped = contextFiltered.filter((m) => !anchorIds.has(m.id));
 
     const compact = (list: typeof anchorFiltered) =>
@@ -247,7 +273,7 @@ async function callTool(
       }));
 
     return textToolResult({
-      anchor: compact(anchorFiltered),
+      anchor: compact(allAnchor),
       context: compact(contextDeduped),
       hint: "Use memory_get(id) for full content of any item. Use memory_search for topic-specific lookup."
     });
@@ -319,31 +345,38 @@ async function callTool(
 
   if (params.name === "memory_list") {
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
-    const limit = readPositiveInt(args.limit, 5, 20);
+    const limit = readPositiveInt(args.limit, 5, 50);
+    const typeFilter = readString(args.type);
     try {
+      // When filtering by type, fetch a large pool then filter in memory
+      const fetchCount = typeFilter ? 1000 : limit;
       const page = await listVectorMemories(env, {
         namespace: resolveNamespace(profile, args.namespace),
-        count: limit,
-        cursor: readString(args.cursor)
+        count: fetchCount,
+        cursor: typeFilter ? undefined : readString(args.cursor)
       });
-      const records = page.data.map((m) => ({
-        id: m.id,
-        type: m.type,
-        summary: m.summary || m.content.slice(0, 80),
-        tags: m.tags,
-        feel_intensity: m.feel_intensity,
-        feel_note: m.feel_note,
-        created_at: m.created_at
-      }));
+      const filtered = typeFilter ? page.data.filter((m) => m.type === typeFilter) : page.data;
+      const records = filtered
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .slice(0, limit)
+        .map((m) => ({
+          id: m.id,
+          type: m.type,
+          summary: m.summary || m.content.slice(0, 80),
+          tags: m.tags,
+          feel_intensity: m.feel_intensity,
+          feel_note: m.feel_note,
+          created_at: m.created_at
+        }));
       return textToolResult({
         data: records,
-        ...(readBoolean(args.include_ids) ? { ids: page.ids } : {}),
+        ...(readBoolean(args.include_ids) ? { ids: records.map((r) => r.id) } : {}),
         paging: {
           limit,
-          cursor: page.cursor,
-          has_more: page.hasMore,
-          count: page.count,
-          total_count: page.totalCount
+          cursor: typeFilter ? null : page.cursor,
+          has_more: typeFilter ? false : page.hasMore,
+          count: records.length,
+          total_count: typeFilter ? filtered.length : page.totalCount
         }
       });
     } catch (error) {
@@ -371,6 +404,24 @@ async function callTool(
         deleted: true
       }
     });
+  }
+
+  if (params.name === "memory_update") {
+    if (!hasScope(profile, "memory:write")) return toolError("Missing memory:write scope");
+    const id = readString(args.id);
+    if (!id) return toolError("id is required");
+    const namespace = resolveNamespace(profile, args.namespace);
+    const existing = await getVectorMemory(env, id);
+    if (!existing || existing.namespace !== namespace) return toolError("Memory not found");
+    const updated = await updateVectorMemory(env, id, {
+      content: readString(args.content) ?? undefined,
+      type: readString(args.type) ?? undefined,
+      summary: args.summary !== undefined ? (readString(args.summary) ?? null) : undefined,
+      tags: Array.isArray(args.tags) ? readStringArray(args.tags) : undefined,
+      pinned: typeof args.pinned === "boolean" ? readBoolean(args.pinned) : undefined
+    });
+    if (!updated) return toolError("memory_update failed");
+    return textToolResult({ data: updated });
   }
 
   if (params.name === "memory_ingest") {

@@ -16,7 +16,7 @@ import type { Env } from "../types";
 // Default retention windows (hardcoded, not user-configurable)
 // ---------------------------------------------------------------------------
 
-const MESSAGES_RETENTION_DAYS = 3;
+const MESSAGES_RETENTION_DAYS = 36500; // 原文长期保留(~100年=实际不删)。莎莎要求"原文是最终真相";且历史导入的消息日期本就久远,小值会让它们一进来就被清空。
 const USAGE_LOGS_RETENTION_DAYS = 30;
 const MEMORY_EVENTS_RETENTION_DAYS = 30;
 const IDEMPOTENCY_KEYS_RETENTION_DAYS = 7;

@@ -37,6 +37,7 @@ interface DailyDigestResult {
   date?: string;
   title?: string;
   summary?: string;
+  diary?: string;
   sections?: Array<{ heading?: string; content?: string }>;
   important_excerpts?: ImportantExcerpt[];
   memories_to_add?: ExtractedMemory[];
@@ -52,6 +53,7 @@ interface DailyDigestStats {
   updatedMemories: number;
   deletedMemories: number;
   savedExcerpts: number;
+  savedDiary: boolean;
   cleanedEmptyMemories: number;
   cursorAdvanced: boolean;
   hasMore: boolean;
@@ -372,6 +374,7 @@ function normalizeDigestResult(value: unknown): DailyDigestResult {
     date: readString(raw.date) ?? undefined,
     title: readString(raw.title) ?? undefined,
     summary: readString(raw.summary) ?? undefined,
+    diary: readString(raw.diary) ?? undefined,
     sections,
     important_excerpts,
     memories_to_add: Array.isArray(raw.memories_to_add)
@@ -433,7 +436,9 @@ function buildDigestPrompt(input: {
     "",
     "窗口：",
     `- 你只能处理 ${input.dateLabel} 这一天窗口内的聊天。窗口是 ${input.startIso} 到 ${input.endIso}。`,
-    input.hasMore ? "- 这是当天的一批聊天，不是完整一天；只整理这一批里明确出现的信息。" : "- 这是当天最后一批或完整批次。",
+    input.hasMore
+      ? "- 这是当天的一批聊天，不是完整一天；只整理这一批里明确出现的信息。diary 字段留空字符串。"
+      : "- 这是当天最后一批或完整批次。diary 字段写哥哥第一人称当天日记，有感受，不是流水账，约150字。",
     "",
     "总原则：",
     "- 原始聊天不要逐条变成记忆，只保留未来真的会用到的事实、偏好、边界、项目进展、承诺。",
@@ -448,6 +453,7 @@ function buildDigestPrompt(input: {
     "Dream 输出格式：",
     "- title 是 12 字以内标题。",
     "- summary 写成一段简短自然中文，描述这次 dream 整理出了什么。",
+    "- diary 是哥哥第一人称、有感受的当天日记（约150字）；只在当天最后一批才写，中途批次留空字符串。",
     "- sections 最多 3 段，每段有 heading 和 content；没有必要可以给空数组。",
     `- important_excerpts 最多 ${input.excerptLimit} 条，quote 必须是值得保留的原文片段。`,
     "- memories_to_add 最多 8 条，每条要短、稳定、可复用。可选字段 feel_intensity（1-5整数）和 feel_note（一句话情绪本质，不是事件描述）；",
@@ -461,6 +467,7 @@ function buildDigestPrompt(input: {
       date: input.dateLabel,
       title: "夜间整理",
       summary: "这次 dream 合并了重复记忆，更新了项目状态，并保留了关键原文。",
+      diary: input.hasMore ? "" : "今天陪莎莎聊了很久，她说起了……我感受到……",
       sections: [{ heading: "整理结果", content: "……" }],
       important_excerpts: [
         {
@@ -633,20 +640,54 @@ async function cleanEmptyMemories(
   return records.length;
 }
 
-async function saveDailySummaryMemory(
+async function upsertDailySummaryMemory(
   env: Env,
-  input: { namespace: string; dateLabel: string; content: string; messageIds: string[] }
+  input: { namespace: string; dateLabel: string; content: string; messageIds: string[]; allMemories: MemoryApiRecord[] }
 ): Promise<void> {
+  const existing = input.allMemories.find(
+    (m) => m.type === "daily_summary" && m.namespace === input.namespace && m.tags.includes(input.dateLabel)
+  );
+  if (existing) {
+    const merged = `${existing.content}\n\n---\n\n${input.content}`;
+    const mergedIds = uniqueStrings([...existing.source_message_ids, ...input.messageIds]);
+    await updateVectorMemory(env, existing.id, { content: merged, sourceMessageIds: mergedIds });
+  } else {
+    await createVectorMemory(env, {
+      namespace: input.namespace,
+      type: "daily_summary",
+      content: input.content,
+      importance: 0.66,
+      confidence: 0.9,
+      tags: ["timeline", "daily_summary", input.dateLabel],
+      source: "dream",
+      sourceMessageIds: input.messageIds
+    });
+  }
+}
+
+async function upsertDiaryMemory(
+  env: Env,
+  input: { namespace: string; dateLabel: string; content: string; messageIds: string[]; allMemories: MemoryApiRecord[]; force: boolean }
+): Promise<boolean> {
+  const existing = input.allMemories.find(
+    (m) => m.type === "diary" && m.namespace === input.namespace && m.tags.includes(input.dateLabel)
+  );
+  if (existing) {
+    if (!input.force) return false;
+    await updateVectorMemory(env, existing.id, { content: input.content });
+    return true;
+  }
   await createVectorMemory(env, {
     namespace: input.namespace,
-    type: "daily_summary",
+    type: "diary",
     content: input.content,
-    importance: 0.66,
+    importance: 0.8,
     confidence: 0.9,
-    tags: ["dream-summary", "daily-summary", input.dateLabel],
+    tags: ["timeline", "diary", input.dateLabel],
     source: "dream",
     sourceMessageIds: input.messageIds
   });
+  return true;
 }
 
 function shouldSaveDailySummaryMemory(env: Env): boolean {
@@ -807,13 +848,21 @@ export async function runDailyMemoryDigest(
     toMessageId: lastMessage.id,
     messageCount: messages.length
   });
+
+  let savedDiary = false;
   if (shouldSaveDailySummaryMemory(env)) {
-    await saveDailySummaryMemory(env, {
-      namespace,
-      dateLabel,
-      content: summaryContent,
-      messageIds
-    });
+    let allMemories: MemoryApiRecord[] = [];
+    try {
+      allMemories = (await listVectorMemories(env, { namespace, count: 1000 })).data;
+    } catch (error) {
+      console.error("dream: failed to list memories for timeline upsert", error);
+    }
+    await upsertDailySummaryMemory(env, { namespace, dateLabel, content: summaryContent, messageIds, allMemories });
+    if (!hasMore && digest.diary) {
+      savedDiary = await upsertDiaryMemory(env, {
+        namespace, dateLabel, content: digest.diary, messageIds, allMemories, force: options.force ?? false
+      });
+    }
   }
 
   const updates = await applyMemoryUpdates(env, {
@@ -858,6 +907,7 @@ export async function runDailyMemoryDigest(
       updatedMemories: updates.updated,
       deletedMemories: updates.deleted,
       savedExcerpts,
+      savedDiary,
       cleanedEmptyMemories,
       cursorAdvanced: true,
       hasMore
