@@ -69,7 +69,8 @@ export async function callOpenAICompat(env: Env, body: OpenAIChatRequest): Promi
         messages: body.messages as any[],
         temperature: body.temperature ?? 0,
         max_tokens: body.max_tokens ?? 2000,
-        stream: false
+        stream: false,
+        ...(body.response_format ? { response_format: body.response_format } : {})
       });
       const text = typeof result === "object" && result !== null
         ? ((result as any).response ?? JSON.stringify(result))
