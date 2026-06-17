@@ -20,6 +20,7 @@ import type { Env, KeyProfile } from "../types";
 import { json, openAiError } from "../utils/json";
 import {
   readBoolean,
+  readIngestMessages,
   readJsonObject,
   readMessages,
   readNumber,
@@ -157,7 +158,7 @@ async function handleIngestMemories(
   const body = await readJsonObject(request);
   if (!body) return openAiError("Request body must be a JSON object", 400);
 
-  const messages = readMessages(body.messages);
+  const messages = readIngestMessages(body.messages);
   if (messages.length === 0) return openAiError("messages must contain at least one message", 400);
 
   const namespace = resolveNamespace(profile, body.namespace);

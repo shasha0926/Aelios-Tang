@@ -220,7 +220,7 @@ export async function saveIngestMessages(
     conversationId: string;
     namespace: string;
     source: string;
-    messages: OpenAIChatMessage[];
+    messages: Array<{ role: string; content: string; created_at?: string }>;
   }
 ): Promise<string[]> {
   const ids: string[] = [];
@@ -246,7 +246,7 @@ export async function saveIngestMessages(
         content,
         input.source,
         0,
-        nowIso()
+        message.created_at ?? nowIso()
       )
       .run();
   }

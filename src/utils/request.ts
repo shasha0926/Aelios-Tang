@@ -68,3 +68,21 @@ export function readMessages(value: unknown): OpenAIChatMessage[] {
     return [{ role, content }];
   });
 }
+
+export function readIngestMessages(value: unknown): Array<{ role: string; content: string; created_at?: string }> {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item): Array<{ role: string; content: string; created_at?: string }> => {
+    if (!isRecord(item)) return [];
+
+    const { role, content, created_at } = item;
+    if (role !== "system" && role !== "user" && role !== "assistant" && role !== "tool") return [];
+    if (typeof content !== "string" || !content.trim()) return [];
+
+    return [{
+      role: role as string,
+      content: content.trim(),
+      ...(typeof created_at === "string" && created_at.trim() ? { created_at: created_at.trim() } : {})
+    }];
+  });
+}

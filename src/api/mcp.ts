@@ -16,6 +16,7 @@ import { json } from "../utils/json";
 import {
   isRecord,
   readBoolean,
+  readIngestMessages,
   readMessages,
   readNumber,
   readPositiveInt,
@@ -374,7 +375,7 @@ async function callTool(
 
   if (params.name === "memory_ingest") {
     if (!hasScope(profile, "memory:write")) return toolError("Missing memory:write scope");
-    const messages = readMessages(args.messages);
+    const messages = readIngestMessages(args.messages);
     if (messages.length === 0) return toolError("messages must contain at least one message");
     const namespace = resolveNamespace(profile, args.namespace);
     const conversation = await getOrCreateConversation(env.DB, {
