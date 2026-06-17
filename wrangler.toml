@@ -1,4 +1,4 @@
-name = "companion-memory-proxy"
+name = "aelios-tang"
 main = "src/index.ts"
 compatibility_date = "2026-04-01"
 keep_vars = true
