@@ -391,7 +391,7 @@ function normalizeDigestResult(value: unknown): DailyDigestResult {
 function formatTranscript(messages: MessageRecord[]): string {
   return messages
     .map((message) => {
-      const role = message.role === "assistant" ? "我(助手)" : "用户";
+      const role = message.role === "assistant" ? "哥哥" : "莎莎";
       return `[${message.id}][${message.created_at}][${role}] ${truncate(message.content.trim(), 700)}`;
     })
     .join("\n\n");
@@ -424,7 +424,7 @@ function buildDigestPrompt(input: {
   hasMore: boolean;
 }): string {
   return [
-    "你是 Aelios 的 nightly dream 记忆整理器。你的任务不是简单总结，而是在用户休息时整理长期记忆。",
+    "你是 Aelios 的 nightly dream 记忆整理器。你的任务不是简单总结，而是在莎莎休息时整理长期记忆。",
     "你会读取旧长期记忆和当天聊天 transcript，产出一份更干净、更一致、更有用的 memory store 更新计划。",
     "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。",
     "",
@@ -447,7 +447,7 @@ function buildDigestPrompt(input: {
     "- 当新信息只是旧记忆的更准确版本，优先 memories_to_update，不要 memories_to_add。",
     "- 当多条旧记忆重复，保留更完整的一条并删除重复项；必要时先 update 保留项。",
     "- pinned=true 的旧记忆不能删除，只能在 memories_to_update 中提出更保守的补充。",
-    "- 站在“我=助手”的视角写。关于用户，用“你……”；关于助手承诺，用“我需要……”。",
+    "- 站在哥哥（assistant）的视角写。对话里 user 是莎莎、assistant 是哥哥；提到她就用“莎莎”，提到自己就用“哥哥”，绝不要用“用户”“助手”这类称呼。",
     "- 不要提到 D1、Vectorize、RAG、数据库、记忆系统、代理层等实现细节。",
     "",
     "Dream 输出格式：",
@@ -471,7 +471,7 @@ function buildDigestPrompt(input: {
       sections: [{ heading: "整理结果", content: "……" }],
       important_excerpts: [
         {
-          quote: "用户或助手说过的关键原文",
+          quote: "莎莎或哥哥说过的关键原文",
           reason: "为什么值得保留",
           tags: ["project"],
           source_message_ids: ["msg_x"]

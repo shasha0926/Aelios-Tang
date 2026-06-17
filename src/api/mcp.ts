@@ -357,7 +357,13 @@ async function callTool(
       });
       const filtered = typeFilter ? page.data.filter((m) => m.type === typeFilter) : page.data;
       const records = filtered
-        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        // timeline 类(daily_summary/diary)按标签里的聊天日期排;否则回退创建时间。
+        // 历史导入时所有记忆 created_at 都挤在导入当天,必须按 dateLabel 才能正确通读。
+        .sort((a, b) => {
+          const da = a.tags.find((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)) ?? a.created_at;
+          const db = b.tags.find((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)) ?? b.created_at;
+          return db.localeCompare(da);
+        })
         .slice(0, limit)
         .map((m) => ({
           id: m.id,
