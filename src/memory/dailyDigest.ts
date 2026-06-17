@@ -277,14 +277,92 @@ function extractJsonObject(text: string): unknown | null {
   }
 
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) return null;
+  if (start === -1) return null;
 
-  try {
-    return JSON.parse(text.slice(start, end + 1)) as unknown;
-  } catch {
-    return null;
+  const end = text.lastIndexOf("}");
+  if (end > start) {
+    try {
+      return JSON.parse(text.slice(start, end + 1)) as unknown;
+    } catch {
+      // fall through to truncation repair
+    }
   }
+
+  // Truncation repair: the model ran out of tokens mid-object, so the JSON is
+  // cut off (no closing braces / dangling string). Best-effort: close any open
+  // string, drop a trailing partial token, and balance the bracket stack.
+  return repairTruncatedJson(text.slice(start));
+}
+
+function repairTruncatedJson(text: string): unknown | null {
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  // Index just past the last point where the structure was safely closable
+  // (right after a complete value at depth >= 1), used as a fallback cut point.
+  let lastSafe = -1;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') {
+        inString = false;
+        if (stack.length > 0) lastSafe = i + 1;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{" || ch === "[") {
+      stack.push(ch === "{" ? "}" : "]");
+    } else if (ch === "}" || ch === "]") {
+      stack.pop();
+      if (stack.length > 0) lastSafe = i + 1;
+    } else if ((ch >= "0" && ch <= "9") || ch === "e" || ch === "l") {
+      // crude: tail of a number / true|false|null at depth >= 1
+      if (stack.length > 0) lastSafe = i + 1;
+    }
+  }
+
+  const attempts: string[] = [];
+  if (!inString) {
+    let s = text.replace(/,\s*$/, "");
+    for (let i = stack.length - 1; i >= 0; i--) s += stack[i];
+    attempts.push(s);
+  }
+  if (lastSafe > 0) {
+    // Cut back to the last complete value, then rebalance from scratch.
+    const head = text.slice(0, lastSafe);
+    const sub: string[] = [];
+    let str = false;
+    let esc = false;
+    for (let i = 0; i < head.length; i++) {
+      const ch = head[i];
+      if (str) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') str = false;
+        continue;
+      }
+      if (ch === '"') str = true;
+      else if (ch === "{" || ch === "[") sub.push(ch === "{" ? "}" : "]");
+      else if (ch === "}" || ch === "]") sub.pop();
+    }
+    let s = head.replace(/,\s*$/, "");
+    for (let i = sub.length - 1; i >= 0; i--) s += sub[i];
+    attempts.push(s);
+  }
+
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(attempt) as unknown;
+    } catch {
+      // try next strategy
+    }
+  }
+  return null;
 }
 
 function normalizeExtractedMemory(value: unknown): ExtractedMemory | null {
