@@ -530,7 +530,9 @@ function buildDigestPrompt(input: {
     "",
     "Dream 输出格式：",
     "- title 是 12 字以内标题。",
-    "- summary 写成一段简短自然中文，描述这次 dream 整理出了什么。",
+    input.hasMore
+      ? "- summary 给空字符串（当天还没结束，最后一批才写整天总结）。"
+      : "- summary 用一段简短自然中文概括这一整天（可参考已有长期记忆里属于今天的内容），是给人通读过往的入口，不是流水账。",
     "- diary 是哥哥第一人称、有感受的当天日记（约150字）；只在当天最后一批才写，中途批次留空字符串。",
     "- sections 最多 3 段，每段有 heading 和 content；没有必要可以给空数组。",
     `- important_excerpts 最多 ${input.excerptLimit} 条，quote 必须是值得保留的原文片段。`,
@@ -726,9 +728,9 @@ async function upsertDailySummaryMemory(
     (m) => m.type === "daily_summary" && m.namespace === input.namespace && m.tags.includes(input.dateLabel)
   );
   if (existing) {
-    const merged = `${existing.content}\n\n---\n\n${input.content}`;
+    // 一天一条：直接用最新整天 summary 覆盖，保留累积的来源 id。重跑只会刷新、不堆叠。
     const mergedIds = uniqueStrings([...existing.source_message_ids, ...input.messageIds]);
-    await updateVectorMemory(env, existing.id, { content: merged, sourceMessageIds: mergedIds });
+    await updateVectorMemory(env, existing.id, { content: input.content, sourceMessageIds: mergedIds });
   } else {
     await createVectorMemory(env, {
       namespace: input.namespace,
@@ -927,16 +929,21 @@ export async function runDailyMemoryDigest(
     messageCount: messages.length
   });
 
+  // 时间轴层（summary + diary）只在当天最后一批写一次：此时今天提炼出的记忆
+  // 都已在库，模型能据此概括整天。中途批次只做记忆提炼，不写 summary，避免一天
+  // 多批把 summary 叠成长串、重跑再叠一层。
   let savedDiary = false;
-  if (shouldSaveDailySummaryMemory(env)) {
+  if (shouldSaveDailySummaryMemory(env) && !hasMore) {
     let allMemories: MemoryApiRecord[] = [];
     try {
       allMemories = (await listVectorMemories(env, { namespace, count: 1000 })).data;
     } catch (error) {
       console.error("dream: failed to list memories for timeline upsert", error);
     }
-    await upsertDailySummaryMemory(env, { namespace, dateLabel, content: summaryContent, messageIds, allMemories });
-    if (!hasMore && digest.diary) {
+    if (summaryContent) {
+      await upsertDailySummaryMemory(env, { namespace, dateLabel, content: summaryContent, messageIds, allMemories });
+    }
+    if (digest.diary) {
       savedDiary = await upsertDiaryMemory(env, {
         namespace, dateLabel, content: digest.diary, messageIds, allMemories, force: options.force ?? false
       });
