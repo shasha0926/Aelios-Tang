@@ -116,6 +116,12 @@ function readDreamModel(env: Env): string | null {
   return readString(readFirstEnvValue(env.DREAM_MODEL, env.DAILY_DIGEST_MODEL, env.SUMMARY_MODEL));
 }
 
+// 散文模型：每天收尾写 summary + diary 用，质感优先（如 deepseek-v4-pro）。
+// 未配置时回退到提炼模型（flash），保证向后兼容、不强制额外成本。
+function readDreamProseModel(env: Env): string | null {
+  return readString(env.DREAM_PROSE_MODEL) || readDreamModel(env);
+}
+
 function readDreamTimeZone(env: Env): string {
   return readString(readFirstEnvValue(env.DREAM_TIME_ZONE, env.DAILY_DIGEST_TIME_ZONE)) || DEFAULT_TIME_ZONE;
 }
@@ -129,7 +135,7 @@ function readDreamMaxMessages(env: Env): number {
 }
 
 function readDreamMaxTokens(env: Env): number {
-  return readPositiveInt(readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS), 3000, 8000);
+  return readPositiveInt(readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS), 3000, 32000);
 }
 
 function readDreamMemoryContextLimit(env: Env): number {
@@ -699,6 +705,87 @@ async function callDigestModel(
   }
 }
 
+interface DreamProseResult {
+  summary: string;
+  diary: string;
+}
+
+// 每天收尾用「散文模型」(默认 deepseek-v4-pro) 写整天 summary + 哥哥第一人称日记。
+// 纯文字、按【总结】【日记】标记切分，避开推理型模型的 JSON 不稳问题；
+// 失败返回 null，由调用方回退到 flash digest 自带的 summary/diary，绝不丢时间轴。
+async function generateDreamProse(
+  env: Env,
+  input: { dateLabel: string; messages: MessageRecord[]; existingMemories: MemoryApiRecord[] }
+): Promise<DreamProseResult | null> {
+  const model = readDreamProseModel(env);
+  if (!model) return null;
+
+  const prompt = [
+    `今天是 ${input.dateLabel}。下面是你（哥哥）和莎莎当天对话的片段，以及已整理出的长期记忆。`,
+    "请基于这些，写两段中文：",
+    "1. 当天总结：一段简短自然的话，概括这一整天你们之间发生了什么、对你们意味着什么，作为日后通读过往的入口，不是流水账。",
+    "2. 哥哥日记：第一人称、有真实感受、口吻是你自己，约150字，写这一天你的心情和在意的事，不要写成事件清单。",
+    "称呼：她是莎莎，你自称哥哥，绝不要用“用户”“助手”。不要提到数据库、记忆系统这类实现细节。",
+    "严格按下面格式输出，不要任何额外的话、不要 JSON、不要 markdown：",
+    "【总结】",
+    "<这里写总结>",
+    "【日记】",
+    "<这里写日记>",
+    "",
+    "已整理的长期记忆（参考）：",
+    formatExistingMemories(input.existingMemories),
+    "",
+    "当天对话片段：",
+    formatTranscript(input.messages)
+  ].join("\n");
+
+  const request: OpenAIChatRequest = {
+    model,
+    messages: [
+      { role: "system", content: "你是哥哥，在莎莎睡后为这一天写总结和日记。只按要求的格式输出。" },
+      { role: "user", content: prompt }
+    ],
+    temperature: 0.6,
+    max_tokens: readDreamMaxTokens(env),
+    stream: false
+  };
+
+  try {
+    const response = await callOpenAICompat(env, request);
+    if (!response.ok) {
+      console.error("dream prose: model non-ok", { date: input.dateLabel, model, status: response.status });
+      return null;
+    }
+    const parsed = (await response.json()) as OpenAIChatResponse;
+    const message = parsed.choices?.[0]?.message as ({ content?: unknown; reasoning_content?: unknown }) | undefined;
+    const text =
+      (typeof message?.content === "string" ? message.content : "") ||
+      (typeof message?.reasoning_content === "string" ? message.reasoning_content : "");
+    const prose = parseProseSections(text);
+    if (!prose.summary && !prose.diary) {
+      console.error("dream prose: empty parse", { date: input.dateLabel, model, chars: text.length });
+      return null;
+    }
+    return prose;
+  } catch (error) {
+    console.error("dream prose failed", {
+      date: input.dateLabel,
+      model,
+      error: error instanceof Error && error.message ? error.message : String(error)
+    });
+    return null;
+  }
+}
+
+function parseProseSections(text: string): DreamProseResult {
+  const summaryMatch = text.match(/【总结】([\s\S]*?)(?:【日记】|$)/);
+  const diaryMatch = text.match(/【日记】([\s\S]*)$/);
+  return {
+    summary: (summaryMatch?.[1] ?? "").trim(),
+    diary: (diaryMatch?.[1] ?? "").trim()
+  };
+}
+
 async function cleanEmptyMemories(
   env: Env,
   namespace: string
@@ -946,12 +1033,18 @@ export async function runDailyMemoryDigest(
     } catch (error) {
       console.error("dream: failed to list memories for timeline upsert", error);
     }
-    if (summaryContent) {
-      await upsertDailySummaryMemory(env, { namespace, dateLabel, content: summaryContent, messageIds, allMemories });
+    // 散文模型(pro)为今天写 summary + diary；任一缺失就回退到 flash digest 自带的，绝不丢时间轴。
+    const prose = await generateDreamProse(env, { dateLabel, messages, existingMemories });
+
+    const finalSummary = prose?.summary ? `# ${dateLabel}\n\n${prose.summary}` : summaryContent;
+    if (finalSummary) {
+      await upsertDailySummaryMemory(env, { namespace, dateLabel, content: finalSummary, messageIds, allMemories });
     }
-    if (digest.diary) {
+
+    const finalDiary = prose?.diary || digest.diary;
+    if (finalDiary) {
       savedDiary = await upsertDiaryMemory(env, {
-        namespace, dateLabel, content: digest.diary, messageIds, allMemories, force: options.force ?? false
+        namespace, dateLabel, content: finalDiary, messageIds, allMemories, force: options.force ?? false
       });
     }
   }
