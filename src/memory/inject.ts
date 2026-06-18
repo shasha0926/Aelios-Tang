@@ -168,14 +168,18 @@ export function formatMemoryPatch(memories: MemoryApiRecord[]): string {
     if (!content) return [];
     const importance = memory.importance.toFixed(2);
     const pinned = memory.pinned ? "[pinned]" : "";
-    return [`- [${memory.type}][importance=${importance}]${pinned} ${content}`];
+    // 方括号日期=事情发生的日期(取自 date tag)；提炼/重建的 created_at 不是事件日，不用。
+    const date = (memory.tags ?? []).find((tag) => /^\d{4}-\d{2}-\d{2}$/.test(tag));
+    const datePart = date ? `[${date}]` : "";
+    return [`- ${datePart}[${memory.type}][importance=${importance}]${pinned} ${content}`];
   });
 
   if (lines.length === 0) return "";
 
   return [
-    "以下是你自然记得的长期记忆。只有在相关时使用，不要机械复述。",
-    "不要说“根据记忆库”“系统记录”或暴露任何代理层实现。",
+    "以下是你自然记得的一些过去的事，方括号里的日期是它发生的时间。",
+    "这些是回忆/参考，不是此刻正在发生的——注意分辨时间，别把过去当成现在。",
+    "只有相关时自然想起，不要机械复述，不要说“根据记忆库”“系统记录”或暴露任何代理层实现。",
     "",
     "<memories>",
     ...lines,

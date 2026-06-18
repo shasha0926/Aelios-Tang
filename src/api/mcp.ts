@@ -26,6 +26,30 @@ import {
   resolveNamespace
 } from "../utils/request";
 
+// 从记忆 tags 里取「事情发生的日期」(YYYY-MM-DD)。提炼/重建时 created_at 往往是
+// dream 的处理日(不是事件日)、会误导，所以优先用 date tag；取不到返回 null。
+function eventDateOf(memory: { tags?: string[] }): string | null {
+  for (const tag of memory.tags ?? []) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(tag)) return tag;
+  }
+  return null;
+}
+
+// 今天的日期(按 dream 时区)。给召回结果加「现在」锚点，防止把过去的回忆当成此刻。
+function nowDateLabel(env: Env): string {
+  const tz = env.DREAM_TIME_ZONE || "Asia/Singapore";
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
 type JsonRpcId = string | number | null;
 
 interface JsonRpcRequest {
@@ -265,6 +289,7 @@ async function callTool(
         id: m.id,
         type: m.type,
         summary: m.summary || m.content.slice(0, 80),
+        date: eventDateOf(m),
         tags: m.tags,
         feel_intensity: m.feel_intensity,
         feel_note: m.feel_note,
@@ -273,6 +298,8 @@ async function callTool(
       }));
 
     return textToolResult({
+      now: nowDateLabel(env),
+      note: "以下是过去的回忆，不是此刻正在发生的事。每条的 date 是它发生的日期（null=时间不详）；now 是今天。别把过去当成现在，注意时间线——比如该说『上次/那天你说过』而不是当成刚刚发生。相关时自然想起即可。",
       anchor: compact(allAnchor),
       context: compact(contextDeduped),
       hint: "Use memory_get(id) for full content of any item. Use memory_search for topic-specific lookup."
@@ -296,6 +323,7 @@ async function callTool(
           id: m.id,
           type: m.type,
           summary: m.summary || m.content.slice(0, 80),
+          date: eventDateOf(m),
           tags: m.tags,
           feel_intensity: m.feel_intensity,
           feel_note: m.feel_note,
