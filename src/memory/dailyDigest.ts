@@ -899,9 +899,14 @@ async function applyMemoryUpdates(
   let updated = 0;
   let deleted = 0;
 
+  // 时间轴层(每日 summary/diary)是「通读过往」的入口，绝不让某天的 dream 模型
+  // 误删/误改另一天的时间轴——这会造成时间线无声丢条。只保护这两类。
+  const isTimeline = (type?: string) => type === "daily_summary" || type === "diary";
+
   for (const item of input.updates) {
     const existing = await getVectorMemory(env, item.target_id);
     if (!existing || existing.namespace !== input.namespace || existing.status !== "active") continue;
+    if (isTimeline(existing.type) || isTimeline(item.type)) continue;
 
     const next = await updateVectorMemory(env, item.target_id, {
       type: item.type,
@@ -917,6 +922,7 @@ async function applyMemoryUpdates(
   for (const item of input.deletes) {
     const existing = await getVectorMemory(env, item.target_id);
     if (!existing || existing.status !== "active" || existing.pinned) continue;
+    if (isTimeline(existing.type)) continue;
     await deleteVectorMemory(env, item.target_id);
     deleted += 1;
   }

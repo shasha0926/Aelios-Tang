@@ -23,14 +23,35 @@ function getDailyDigestMaxRuns(env: Env): number {
   return Math.min(Math.max(Math.floor(parsed), 1), 10);
 }
 
+// 一天可能要分多批读完才轮到「收口批」(hasMore=false) 写 summary+diary。
+// 旧逻辑 `if (!result.ran || ...) break` 把任何 ran=false 都当终止——一旦遇到
+// 模型瞬时错误(503/坏JSON)就半途中断，当天 summary+diary 永远不写。这里区分
+// 「正常终止(没消息/已完成)」与「瞬时错误」：前者收工，后者重试，直到真正收口。
+const TERMINAL_DIGEST_REASONS = new Set(["no_messages", "already_done", "dream_disabled"]);
+const MAX_TRANSIENT_RETRIES = 3;
+
 async function runDailyMemoryDigestBatches(env: Env, namespace: string): Promise<unknown[]> {
   const results: unknown[] = [];
   const maxRuns = getDailyDigestMaxRuns(env);
+  let processed = 0;
+  let transientRetries = 0;
 
-  for (let i = 0; i < maxRuns; i += 1) {
+  while (processed < maxRuns) {
     const result = await runDailyMemoryDigest(env, namespace);
     results.push(result);
-    if (!result.ran || !result.stats?.hasMore) break;
+
+    if (result.ran) {
+      processed += 1;
+      transientRetries = 0;
+      if (!result.stats?.hasMore) break; // 收口完成（summary+diary 已写）
+      continue;
+    }
+
+    // ran === false
+    if (TERMINAL_DIGEST_REASONS.has(result.reason ?? "")) break; // 正常终止
+    // 瞬时错误：不放弃收口，重试同一批；连续超限则留给下次 cron 续跑（游标未 done）
+    transientRetries += 1;
+    if (transientRetries >= MAX_TRANSIENT_RETRIES) break;
   }
 
   return results;
