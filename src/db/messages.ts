@@ -253,3 +253,49 @@ export async function saveIngestMessages(
 
   return ids;
 }
+
+// ---------------------------------------------------------------------------
+// Admin: 原文台账(④)统计 / 定向清理。
+// 仅用于"干净重建"——历史导入混入了 regenerate/编辑的废弃分支，需要按 source
+// 整段清掉再重新导入主路径。普通运行不会调用这里。
+// ---------------------------------------------------------------------------
+
+export async function countMessagesBySource(
+  db: D1Database,
+  namespace: string
+): Promise<Array<{ source: string | null; count: number; min_created_at: string | null; max_created_at: string | null }>> {
+  const result = await db
+    .prepare(
+      `SELECT source, COUNT(*) AS count, MIN(created_at) AS min_created_at, MAX(created_at) AS max_created_at
+       FROM messages
+       WHERE namespace = ?
+       GROUP BY source
+       ORDER BY count DESC`
+    )
+    .bind(namespace)
+    .all<{ source: string | null; count: number; min_created_at: string | null; max_created_at: string | null }>();
+  return result.results ?? [];
+}
+
+export async function deleteMessagesBySource(
+  db: D1Database,
+  namespace: string,
+  source: string
+): Promise<number> {
+  const result = await db
+    .prepare("DELETE FROM messages WHERE namespace = ? AND source = ?")
+    .bind(namespace, source)
+    .run();
+  return result.meta.changes ?? 0;
+}
+
+export async function deleteAllMessagesInNamespace(
+  db: D1Database,
+  namespace: string
+): Promise<number> {
+  const result = await db
+    .prepare("DELETE FROM messages WHERE namespace = ?")
+    .bind(namespace)
+    .run();
+  return result.meta.changes ?? 0;
+}

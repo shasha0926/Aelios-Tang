@@ -6,6 +6,7 @@ import { handleChatCompletions } from "./api/chatCompletions";
 import { handleGuideDogChatCompletions } from "./api/guideDog";
 import { handleIngestMessagesApi, handleMemories, handleSearchMemoriesApi } from "./api/memories";
 import { handleMcp } from "./api/mcp";
+import { handleMessagesAdmin } from "./api/messagesAdmin";
 import { handleModels } from "./api/models";
 import { runDailyMemoryDigest } from "./memory/dailyDigest";
 import { runMemoryRetention } from "./memory/retention";
@@ -86,6 +87,10 @@ export default {
 
     if (url.pathname === "/mcp" || url.pathname === "/memory-mcp") {
       return handleMcp(request, env, ctx);
+    }
+
+    if (url.pathname === "/v1/admin/messages") {
+      return handleMessagesAdmin(request, env);
     }
 
     if (url.pathname.startsWith("/v1/memories")) {
