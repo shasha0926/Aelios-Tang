@@ -227,6 +227,7 @@ export interface MemoryApiRecord {
   updated_at: string;
   expires_at: string | null;
   feel_intensity: number | null;
+  feel_valence: number | null;
   feel_resolved: boolean;
   feel_note: string | null;
   score?: number;

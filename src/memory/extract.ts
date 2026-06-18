@@ -9,6 +9,8 @@ export interface ExtractedMemory {
   tags: string[];
   source_message_ids: string[];
   feel_intensity?: number;
+  feel_valence?: number;
+  feel_resolved?: boolean;
   feel_note?: string;
 }
 

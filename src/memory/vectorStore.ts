@@ -18,6 +18,7 @@ export interface VectorMemoryInput {
   sourceMessageIds?: string[];
   expiresAt?: string | null;
   feelIntensity?: number | null;
+  feelValence?: number | null;
   feelResolved?: boolean;
   feelNote?: string | null;
 }
@@ -35,6 +36,7 @@ export interface VectorMemoryPatch {
   sourceMessageIds?: string[];
   expiresAt?: string | null;
   feelIntensity?: number | null;
+  feelValence?: number | null;
   feelResolved?: boolean;
   feelNote?: string | null;
 }
@@ -93,6 +95,12 @@ function readFeelIntensity(value: unknown): number | null {
   return rounded >= 1 && rounded <= 5 ? rounded : null;
 }
 
+// valence(情绪正负)：Russell 环形模型的极性维，-1(负)~+1(正)，连续值。
+function readFeelValence(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.min(Math.max(value, -1), 1);
+}
+
 function toMetadata(input: Required<VectorMemoryInput> & { id: string; vectorId: string; createdAt: string; updatedAt: string; status?: string }): Record<string, VectorizeVectorMetadata> {
   return {
     kind: "memory",
@@ -112,6 +120,7 @@ function toMetadata(input: Required<VectorMemoryInput> & { id: string; vectorId:
     updated_at: input.updatedAt,
     expires_at: input.expiresAt || "",
     feel_intensity: input.feelIntensity ?? 0,
+    feel_valence: input.feelValence ?? 0,
     feel_resolved: input.feelResolved ?? false,
     feel_note: input.feelNote ?? ""
   };
@@ -151,6 +160,7 @@ export function vectorMetadataToMemoryRecord(
     updated_at: readString(metadata.updated_at) || readString(metadata.created_at) || now,
     expires_at: readString(metadata.expires_at),
     feel_intensity: readFeelIntensity(metadata.feel_intensity),
+    feel_valence: readFeelValence(metadata.feel_valence),
     feel_resolved: readBoolean(metadata.feel_resolved),
     feel_note: readString(metadata.feel_note),
     ...(score === undefined ? {} : { score })
@@ -226,6 +236,7 @@ export async function createVectorMemory(env: Env, input: VectorMemoryInput): Pr
     sourceMessageIds: input.sourceMessageIds ?? [],
     expiresAt: input.expiresAt ?? null,
     feelIntensity: input.feelIntensity ?? null,
+    feelValence: input.feelValence ?? null,
     feelResolved: input.feelResolved ?? false,
     feelNote: input.feelNote ?? null,
     id,
@@ -263,6 +274,7 @@ export async function createVectorMemory(env: Env, input: VectorMemoryInput): Pr
     updated_at: now,
     expires_at: normalized.expiresAt,
     feel_intensity: normalized.feelIntensity,
+    feel_valence: normalized.feelValence,
     feel_resolved: normalized.feelResolved,
     feel_note: normalized.feelNote
   };
@@ -307,6 +319,7 @@ export async function deleteVectorMemory(env: Env, id: string): Promise<boolean>
             sourceMessageIds: existing.source_message_ids,
             expiresAt: existing.expires_at ?? null,
             feelIntensity: existing.feel_intensity ?? null,
+            feelValence: existing.feel_valence ?? null,
             feelResolved: existing.feel_resolved ?? false,
             feelNote: existing.feel_note ?? null,
             id: existing.id,
@@ -354,6 +367,7 @@ export async function updateVectorMemory(
     sourceMessageIds: patch.sourceMessageIds ?? existing.source_message_ids,
     expiresAt: patch.expiresAt === undefined ? existing.expires_at : patch.expiresAt,
     feelIntensity: patch.feelIntensity === undefined ? (existing.feel_intensity ?? null) : patch.feelIntensity,
+    feelValence: patch.feelValence === undefined ? (existing.feel_valence ?? null) : patch.feelValence,
     feelResolved: patch.feelResolved === undefined ? (existing.feel_resolved ?? false) : patch.feelResolved,
     feelNote: patch.feelNote === undefined ? existing.feel_note : patch.feelNote,
     id: existing.id,
@@ -385,6 +399,7 @@ export async function updateVectorMemory(
     source_message_ids: next.sourceMessageIds,
     expires_at: next.expiresAt,
     feel_intensity: next.feelIntensity,
+    feel_valence: next.feelValence,
     feel_resolved: next.feelResolved,
     feel_note: next.feelNote,
     updated_at: updatedAt,

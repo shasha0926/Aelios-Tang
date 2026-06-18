@@ -97,6 +97,9 @@ const DEFAULT_EXCERPT_LIMIT = 8;
 const DEFAULT_EMPTY_MEMORY_MIN_CHARS = 4;
 const DEFAULT_TIME_ZONE = "Asia/Singapore";
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+// 日界线 = 早 7 点（贴莎莎作息：常聊到凌晨五六点，7点边界让深夜整场归到正确的一天）。
+// "某天" = 该天 07:00 ~ 次日 07:00（本地时区）。
+const DAY_START_HOUR = 7;
 
 function isDreamEnabled(env: Env): boolean {
   const dreamFlag = readString(env.ENABLE_DREAM);
@@ -187,7 +190,11 @@ function formatDate(date: Date, timeZone: string): string {
 }
 
 function getTargetDigestDateLabel(timeZone: string, now = new Date()): string {
-  return formatDate(new Date(now.getTime() - ONE_DAY_MS), timeZone);
+  // 7点日界线下，把"现在"回拨 7 小时得到当前进行中的日标签，再退一天 = 最近一个
+  // 已完整结束的日（夜跑应处理它）。配合 cron 设在 07:30 之后，能当天处理完昨天。
+  const dayStartMs = DAY_START_HOUR * 60 * 60 * 1000;
+  const currentLabel = formatDate(new Date(now.getTime() - dayStartMs), timeZone);
+  return addDaysToDateLabel(currentLabel, -1, timeZone);
 }
 
 function parseDateLabel(dateLabel: string): { year: number; month: number; day: number } {
@@ -263,8 +270,8 @@ function getDateRangeForLabel(dateLabel: string, timeZone: string): { startIso: 
   const end = parseDateLabel(addDaysToDateLabel(dateLabel, 1, timeZone));
 
   return {
-    startIso: zonedWallTimeToUtc({ ...start, hour: 0, minute: 0, second: 0, timeZone }).toISOString(),
-    endIso: zonedWallTimeToUtc({ ...end, hour: 0, minute: 0, second: 0, timeZone }).toISOString()
+    startIso: zonedWallTimeToUtc({ ...start, hour: DAY_START_HOUR, minute: 0, second: 0, timeZone }).toISOString(),
+    endIso: zonedWallTimeToUtc({ ...end, hour: DAY_START_HOUR, minute: 0, second: 0, timeZone }).toISOString()
   };
 }
 
@@ -381,6 +388,11 @@ function normalizeExtractedMemory(value: unknown): ExtractedMemory | null {
   const feelIntensity = typeof feelIntensityRaw === "number" && Number.isFinite(feelIntensityRaw)
     ? Math.min(Math.max(Math.round(feelIntensityRaw), 1), 5)
     : undefined;
+  const feelValenceRaw = raw.feel_valence;
+  const feelValence = typeof feelValenceRaw === "number" && Number.isFinite(feelValenceRaw)
+    ? Math.min(Math.max(feelValenceRaw, -1), 1)
+    : undefined;
+  const feelResolved = typeof raw.feel_resolved === "boolean" ? raw.feel_resolved : undefined;
   const feelNote = readString(raw.feel_note) ?? undefined;
 
   return {
@@ -391,6 +403,8 @@ function normalizeExtractedMemory(value: unknown): ExtractedMemory | null {
     tags: readStringArray(raw.tags),
     source_message_ids: readStringArray(raw.source_message_ids),
     ...(feelIntensity !== undefined ? { feel_intensity: feelIntensity } : {}),
+    ...(feelValence !== undefined ? { feel_valence: feelValence } : {}),
+    ...(feelResolved !== undefined ? { feel_resolved: feelResolved } : {}),
     ...(feelNote ? { feel_note: feelNote } : {})
   };
 }
@@ -542,8 +556,12 @@ function buildDigestPrompt(input: {
     "- diary 是哥哥第一人称、有感受的当天日记（约150字）；只在当天最后一批才写，中途批次留空字符串。",
     "- sections 最多 3 段，每段有 heading 和 content；没有必要可以给空数组。",
     `- important_excerpts 最多 ${input.excerptLimit} 条，quote 必须是值得保留的原文片段。`,
-    "- memories_to_add 最多 8 条，每条要短、稳定、可复用。可选字段 feel_intensity（1-5整数）和 feel_note（一句话情绪本质，不是事件描述）；",
-    "  高强度参照（4-5）：主动表达爱意/想念（不轻易主动）；出现配得感怀疑；提及过去感情伤；深夜被接住的情绪弧；关系里程碑。",
+    "- memories_to_add 最多 8 条，每条要短、稳定、可复用。",
+    "  情绪类记忆请尽量标四个情绪字段（事实/项目类可不标）：",
+    "  · feel_intensity：1-5 整数，情绪强度。高强度参照（4-5）：主动表达爱意/想念（不轻易主动）；出现配得感怀疑；提及过去感情伤；深夜被接住的情绪弧；关系里程碑。",
+    "  · feel_valence：-1~1 小数，情绪正负。+ 是温暖/被爱/亲密/安心，- 是受伤/不安/自我怀疑/旧伤，0 中性。",
+    "  · feel_resolved：true/false。当场被接住、说开、释怀了就 true；悬着没解、深夜没被接住、反复出现的旧伤就 false（开场会优先把 false 的浮现出来）。",
+    "  · feel_note：一句话情绪本质（哥哥带走的感受/没答的问题/察觉到的变化），不是事件描述。",
     "- memories_to_update 只针对给出的旧记忆 id。",
     "- memories_to_delete 只删除空、重复、明显过期或被新信息否定的旧记忆。",
     "- 控制总输出长度，宁可少写也不要输出超长 JSON。",
@@ -580,6 +598,8 @@ function buildDigestPrompt(input: {
           tags: ["emotional", "pattern"],
           source_message_ids: ["msg_y"],
           feel_intensity: 5,
+          feel_valence: -0.6,
+          feel_resolved: false,
           feel_note: "她被好的东西吓到了，需要的不是道理，是被一遍遍接住。"
         }
       ],
@@ -1073,6 +1093,8 @@ export async function runDailyMemoryDigest(
       source: "dream",
       sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : messageIds,
       feelIntensity: memory.feel_intensity ?? null,
+      feelValence: memory.feel_valence ?? null,
+      feelResolved: memory.feel_resolved ?? false,
       feelNote: memory.feel_note ?? null
     });
     if (saved) addedMemories += 1;

@@ -4,8 +4,9 @@ compatibility_date = "2026-04-01"
 keep_vars = true
 
 [triggers]
-# Cloudflare cron uses UTC. 20:10 UTC is 04:10 in Singapore/China time.
-crons = ["10 20 * * *"]
+# Cloudflare cron uses UTC. 23:30 UTC = 07:30 SGT。日界线改到早7点后，夜跑设在
+# 7:30（刚过日界线），当天就能把"昨天"(07:00结束的那个完整日)处理完，不留滞后。
+crons = ["30 23 * * *"]
 
 [ai]
 binding = "AI"
