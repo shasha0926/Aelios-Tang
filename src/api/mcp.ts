@@ -351,7 +351,7 @@ async function callTool(
 
     return textToolResult({
       now: nowDateLabel(env),
-      note: "开场先读 breath 和 recent，再看 anchor/context。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口，语气照日记走。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      note: "开场先读 breath 和 recent，再看 anchor/context。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
       breath: compact(breath),
       recent: recentFull,
       anchor: compact(allAnchor),
