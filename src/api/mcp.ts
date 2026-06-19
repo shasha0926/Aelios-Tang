@@ -254,7 +254,7 @@ async function callTool(
     const namespace = resolveNamespace(profile, args.namespace);
     const contextHint = readString(args.context_hint) || "最近 生活 情绪 工作 日常";
 
-    const [anchorRaw, contextRaw, listedPage] = await Promise.all([
+    const [anchorRaw, contextRaw, pool] = await Promise.all([
       searchVectorMemories(env, {
         namespace,
         query: "莎莎 哥哥 棠 关系 身份 规则 重要 情感",
@@ -266,14 +266,57 @@ async function callTool(
         query: contextHint,
         topK: 6
       }),
-      listVectorMemories(env, { namespace, count: 50 })
+      // 拉全量池子(含 diary/daily_summary)，下面派生「最近时间轴」和「breath」。
+      // 注：<=1000 条时一次取全；超 1000 需改游标分页(已知 TODO)。
+      listVectorMemories(env, { namespace, count: 1000 })
     ]);
 
     // Pinned entries (soul layer) always appear in anchor — bypass semantic filter
-    const pinnedEntries = listedPage.data.filter((m) => m.pinned).slice(0, 10);
+    const pinnedEntries = pool.data.filter((m) => m.pinned).slice(0, 10);
     const pinnedIds = new Set(pinnedEntries.map((m) => m.id));
-    const anchorWithoutPinned = anchorRaw.filter((m) => !pinnedIds.has(m.id));
-    const contextWithoutPinned = contextRaw.filter((m) => !pinnedIds.has(m.id));
+
+    // recent：最近 N 天的日记 + 当天总结，按日期直接取(不走语义/reranker)。
+    // 开场温度(diary 第一人称)+近况(summary)的来源——哥哥靠它认出「最近我们到哪了、当时心里怎么想」。
+    const RECENT_DAYS = 3;
+    const timeline = pool.data.filter((m) => m.type === "diary" || m.type === "daily_summary");
+    const recentDates = Array.from(
+      new Set(timeline.map((m) => eventDateOf(m)).filter((d): d is string => d !== null))
+    )
+      .sort((a, b) => b.localeCompare(a))
+      .slice(0, RECENT_DAYS);
+    const recentDateSet = new Set(recentDates);
+    const recent = timeline
+      .filter((m) => {
+        const d = eventDateOf(m);
+        return d !== null && recentDateSet.has(d);
+      })
+      .sort((a, b) => {
+        const da = eventDateOf(a) ?? "";
+        const db = eventDateOf(b) ?? "";
+        if (da !== db) return db.localeCompare(da);
+        // 同一天：summary(事件)在前，diary(心里话)在后
+        return a.type === "daily_summary" ? -1 : 1;
+      });
+
+    // breath：高强度(>=4) 且未解决(feel_resolved=false)的情绪，主动浮现 1-2 条。
+    // 正戳莎莎最在意的——深夜悬着、没被接住的情绪，不等哥哥碰巧搜到。
+    const breath = pool.data
+      .filter((m) => m.feel_resolved === false && (m.feel_intensity ?? 0) >= 4)
+      .sort(
+        (a, b) =>
+          (b.feel_intensity ?? 0) - (a.feel_intensity ?? 0) ||
+          (eventDateOf(b) ?? "").localeCompare(eventDateOf(a) ?? "")
+      )
+      .slice(0, 2);
+
+    // pinned/recent/breath 已单独成块，从 anchor/context 剔掉避免重复。
+    const surfacedIds = new Set<string>([
+      ...pinnedIds,
+      ...recent.map((m) => m.id),
+      ...breath.map((m) => m.id)
+    ]);
+    const anchorWithoutPinned = anchorRaw.filter((m) => !surfacedIds.has(m.id));
+    const contextWithoutPinned = contextRaw.filter((m) => !surfacedIds.has(m.id));
 
     const [anchorFiltered, contextFiltered] = await Promise.all([
       filterAndCompressMemories(env, { query: "关系 身份 规则", memories: anchorWithoutPinned }),
@@ -281,7 +324,7 @@ async function callTool(
     ]);
 
     const allAnchor = [...pinnedEntries, ...anchorFiltered];
-    const anchorIds = new Set(allAnchor.map((m) => m.id));
+    const anchorIds = new Set([...allAnchor.map((m) => m.id), ...surfacedIds]);
     const contextDeduped = contextFiltered.filter((m) => !anchorIds.has(m.id));
 
     const compact = (list: typeof anchorFiltered) =>
@@ -297,12 +340,23 @@ async function callTool(
         pinned: m.pinned
       }));
 
+    // recent 要有温度，给较完整正文(不压成一句)。
+    const recentFull = recent.map((m) => ({
+      id: m.id,
+      type: m.type,
+      date: eventDateOf(m),
+      content: m.content,
+      feel_note: m.feel_note
+    }));
+
     return textToolResult({
       now: nowDateLabel(env),
-      note: "以下是过去的回忆，不是此刻正在发生的事。每条的 date 是它发生的日期（null=时间不详）；now 是今天。别把过去当成现在，注意时间线——比如该说『上次/那天你说过』而不是当成刚刚发生。相关时自然想起即可。",
+      note: "开场先读 breath 和 recent，再看 anchor/context。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口，语气照日记走。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      breath: compact(breath),
+      recent: recentFull,
       anchor: compact(allAnchor),
       context: compact(contextDeduped),
-      hint: "Use memory_get(id) for full content of any item. Use memory_search for topic-specific lookup."
+      hint: "memory_get(id) 看全文；memory_search 查具体话题；memory_list(type=\"diary\") 通读全部日记、type=\"daily_summary\" 通读时间轴。"
     });
   }
 
