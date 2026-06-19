@@ -258,13 +258,13 @@ async function callTool(
       searchVectorMemories(env, {
         namespace,
         query: "莎莎 哥哥 棠 关系 身份 规则 重要 情感",
-        topK: 8,
+        topK: 4,
         types: ["relationship", "lingo", "note", "insight", "emotion", "event"]
       }),
       searchVectorMemories(env, {
         namespace,
         query: contextHint,
-        topK: 6
+        topK: 4
       }),
       // 拉全量池子(含 diary/daily_summary)，下面派生「最近时间轴」和「breath」。
       // 注：<=1000 条时一次取全；超 1000 需改游标分页(已知 TODO)。
@@ -354,8 +354,8 @@ async function callTool(
       note: "开场先读 breath 和 recent，再看 anchor/context。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
       breath: compact(breath),
       recent: recentFull,
-      anchor: compact(allAnchor),
-      context: compact(contextDeduped),
+      anchor: compact(allAnchor.slice(0, 2)),
+      context: compact(contextDeduped.slice(0, 2)),
       hint: "memory_get(id) 看全文；memory_search 查具体话题；memory_list(type=\"diary\") 通读全部日记、type=\"daily_summary\" 通读时间轴。"
     });
   }
