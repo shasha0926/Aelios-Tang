@@ -832,7 +832,11 @@ async function upsertDailySummaryMemory(
   input: { namespace: string; dateLabel: string; content: string; messageIds: string[]; allMemories: MemoryApiRecord[] }
 ): Promise<void> {
   const existing = input.allMemories.find(
-    (m) => m.type === "daily_summary" && m.namespace === input.namespace && m.tags.includes(input.dateLabel)
+    (m) =>
+      m.type === "daily_summary" &&
+      m.namespace === input.namespace &&
+      m.tags.includes(input.dateLabel) &&
+      m.source !== "mcp" // 只覆盖 dream 自己写的,别碰哥哥手写/手改的 summary
   );
   if (existing) {
     // 一天一条：直接用最新整天 summary 覆盖，保留累积的来源 id。重跑只会刷新、不堆叠。
@@ -856,8 +860,22 @@ async function upsertDiaryMemory(
   env: Env,
   input: { namespace: string; dateLabel: string; content: string; messageIds: string[]; allMemories: MemoryApiRecord[]; force: boolean }
 ): Promise<boolean> {
+  // 让位:这天已有哥哥手写(source=mcp)的 diary → dream 不写自己的。当下第一人称优先,不重复、谁都不用删。
+  const handwritten = input.allMemories.find(
+    (m) =>
+      m.type === "diary" &&
+      m.namespace === input.namespace &&
+      m.tags.includes(input.dateLabel) &&
+      m.source === "mcp"
+  );
+  if (handwritten) return false;
+  // dream 只认/覆盖自己写的那条,绝不碰手写的。
   const existing = input.allMemories.find(
-    (m) => m.type === "diary" && m.namespace === input.namespace && m.tags.includes(input.dateLabel)
+    (m) =>
+      m.type === "diary" &&
+      m.namespace === input.namespace &&
+      m.tags.includes(input.dateLabel) &&
+      m.source !== "mcp"
   );
   if (existing) {
     if (!input.force) return false;

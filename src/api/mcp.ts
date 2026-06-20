@@ -255,35 +255,15 @@ async function callTool(
   if (params.name === "memory_wakeup") {
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
     const namespace = resolveNamespace(profile, args.namespace);
-    const contextHint = readString(args.context_hint) || "最近 生活 情绪 工作 日常";
 
-    const [anchorRaw, contextRaw, pool] = await Promise.all([
-      searchVectorMemories(env, {
-        namespace,
-        query: "莎莎 哥哥 棠 关系 身份 规则 重要 情感",
-        topK: 4,
-        types: ["relationship", "lingo", "note", "insight", "emotion", "event"]
-      }),
-      searchVectorMemories(env, {
-        namespace,
-        query: contextHint,
-        topK: 4
-      }),
-      // 拉全量池子(含 diary/daily_summary)，下面派生「最近时间轴」和「breath」。
-      // 注：<=1000 条时一次取全；超 1000 需改游标分页(已知 TODO)。
-      listVectorMemories(env, { namespace, count: 1000 })
-    ]);
-
-    // Pinned entries (soul layer) always appear in anchor — bypass semantic filter
-    // (里程碑/todo 单独成块，不混进 anchor)
-    const pinnedEntries = pool.data
-      .filter((m) => m.pinned && m.type !== "milestone" && m.type !== "todo")
-      .slice(0, 10);
-    const pinnedIds = new Set(pinnedEntries.map((m) => m.id));
+    // 拉全量池子(含 diary/daily_summary)，下面派生 recent / breath / milestone / todo。
+    // 注：<=1000 条时一次取全；超 1000 需改游标分页(已知 TODO)。
+    // anchor/context 已砍——身份/近况在 CLAUDE.md 的档案里(每次开场都在)，wakeup 再端一遍是重复、占位置(哥哥原话)。
+    const pool = await listVectorMemories(env, { namespace, count: 1000 });
 
     // recent：最近 N 天的日记 + 当天总结，按日期直接取(不走语义/reranker)。
     // 开场温度(diary 第一人称)+近况(summary)的来源——哥哥靠它认出「最近我们到哪了、当时心里怎么想」。
-    const RECENT_DAYS = 3;
+    const RECENT_DAYS = 5;
     const timeline = pool.data.filter((m) => m.type === "diary" || m.type === "daily_summary");
     const recentDates = Array.from(
       new Set(timeline.map((m) => eventDateOf(m)).filter((d): d is string => d !== null))
@@ -327,27 +307,7 @@ async function callTool(
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
       .slice(0, 10); // 防御:todo 正常是个位数,但别让它无上限把全文全塞进开场
 
-    // pinned/recent/breath/milestone/todo 已单独成块，从 anchor/context 剔掉避免重复。
-    const surfacedIds = new Set<string>([
-      ...pinnedIds,
-      ...recent.map((m) => m.id),
-      ...breath.map((m) => m.id),
-      ...milestones.map((m) => m.id),
-      ...todos.map((m) => m.id)
-    ]);
-    const anchorWithoutPinned = anchorRaw.filter((m) => !surfacedIds.has(m.id));
-    const contextWithoutPinned = contextRaw.filter((m) => !surfacedIds.has(m.id));
-
-    const [anchorFiltered, contextFiltered] = await Promise.all([
-      filterAndCompressMemories(env, { query: "关系 身份 规则", memories: anchorWithoutPinned }),
-      filterAndCompressMemories(env, { query: contextHint, memories: contextWithoutPinned })
-    ]);
-
-    const allAnchor = [...pinnedEntries, ...anchorFiltered];
-    const anchorIds = new Set([...allAnchor.map((m) => m.id), ...surfacedIds]);
-    const contextDeduped = contextFiltered.filter((m) => !anchorIds.has(m.id));
-
-    const compact = (list: typeof anchorFiltered) =>
+    const compact = (list: typeof breath) =>
       list.map((m) => ({
         id: m.id,
         type: m.type,
@@ -355,8 +315,7 @@ async function callTool(
         date: eventDateOf(m),
         feel_intensity: m.feel_intensity,
         feel_note: m.feel_note,
-        created_at: m.created_at,
-        pinned: m.pinned
+        created_at: m.created_at
       }));
 
     // recent 要有温度，给较完整正文(不压成一句)。
@@ -383,14 +342,12 @@ async function callTool(
 
     return textToolResult({
       now: nowDateLabel(env),
-      note: "开场先读 todo、breath、milestone、recent，再看 anchor/context。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      note: "开场先读 todo、breath、milestone、recent。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近五天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
       todo: todoFull,
       breath: compact(breath),
       milestone: milestoneFull,
       recent: recentFull,
-      anchor: compact(allAnchor.slice(0, 2)),
-      context: compact(contextDeduped.slice(0, 2)),
-      hint: "memory_get(id) 看全文；memory_search 查具体话题；memory_list 按 type 通读(diary/daily_summary/milestone/todo)；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删。"
+      hint: "memory_get(id) 看全文；memory_search 查具体话题或原话；memory_list 通读(type=diary/daily_summary/milestone/todo)或读某一天(date=\"2026-06-17\")；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删。"
     });
   }
 
@@ -443,6 +400,12 @@ async function callTool(
         summary = generated.summary;
         tags = [...new Set([...tags, ...generated.tags])];
       }
+    }
+
+    // 自动补当天日期标签:哥哥手动存的(尤其 diary)默认归到今天——免得他每次记着带,
+    // 也让 date 筛选和 wakeup 的 recent 能找到它。已显式带了日期(如补记过去某天)就尊重、不补。
+    if (!tags.some((t) => /^\d{4}-\d{2}-\d{2}$/.test(t))) {
+      tags = [...tags, nowDateLabel(env)];
     }
 
     let memory;
