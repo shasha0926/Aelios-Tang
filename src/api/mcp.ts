@@ -158,7 +158,7 @@ function getTools(): Array<Record<string, unknown>> {
           type: { type: "string", description: "Filter by memory type, e.g. 'daily_summary', 'diary', 'excerpt', 'relationship'." },
           date: { type: "string", description: "Filter to one day by its date tag, e.g. '2026-06-17'. Returns everything tagged with that date." },
           tag: { type: "string", description: "Filter by an arbitrary tag (exact match)." },
-          full: { type: "boolean", description: "Return full content instead of compact summaries. Use when you actually need to read the memories, e.g. before rewriting a day's summary." },
+          full: { type: "boolean", description: "Return full content instead of compact summaries. Capped low (default 8, max 20) to avoid flooding context — list compact first to see what a day holds, then set full=true (optionally narrowed with type='excerpt') to read the key items. If paging.has_more is true there are more than shown; narrow by type or raise limit." },
           status: { type: "string" },
           namespace: { type: "string" }
         }
@@ -467,8 +467,11 @@ async function callTool(
     const tagFilter = readString(args.tag);
     const wantFull = readBoolean(args.full);
     const hasFilter = Boolean(typeFilter || dateFilter || tagFilter);
-    // 过滤时默认放宽到 50(够看完一整天);否则保持 5。上限 100。
-    const limit = readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
+    // limit 默认/上限:出全文时收紧到 8/20——防一次性灌爆上下文(她踩过这个坑)。
+    // 摘要很短:过滤时给 50/上限100,不过滤维持 5。想读全文就先看摘要目录再针对性 full。
+    const limit = wantFull
+      ? readPositiveInt(args.limit, 8, 20)
+      : readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
     try {
       // 任一过滤(type/date/tag)都先拉大池子再在内存里筛;游标分页只在不过滤时走。
       const fetchCount = hasFilter ? 1000 : limit;
@@ -509,7 +512,8 @@ async function callTool(
         paging: {
           limit,
           cursor: hasFilter ? null : page.cursor,
-          has_more: hasFilter ? false : page.hasMore,
+          // 过滤是内存筛(无cursor续传),但命中超过 limit 时仍要让哥哥知道"没看全"。
+          has_more: hasFilter ? filtered.length > limit : page.hasMore,
           count: records.length,
           total_count: hasFilter ? filtered.length : page.totalCount
         }
