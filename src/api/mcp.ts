@@ -272,8 +272,10 @@ async function callTool(
     ]);
 
     // Pinned entries (soul layer) always appear in anchor — bypass semantic filter
-    // (里程碑单独成块，不混进 anchor)
-    const pinnedEntries = pool.data.filter((m) => m.pinned && m.type !== "milestone").slice(0, 10);
+    // (里程碑/todo 单独成块，不混进 anchor)
+    const pinnedEntries = pool.data
+      .filter((m) => m.pinned && m.type !== "milestone" && m.type !== "todo")
+      .slice(0, 10);
     const pinnedIds = new Set(pinnedEntries.map((m) => m.id));
 
     // recent：最近 N 天的日记 + 当天总结，按日期直接取(不走语义/reranker)。
@@ -316,12 +318,18 @@ async function callTool(
       .sort((a, b) => (eventDateOf(b) ?? b.created_at).localeCompare(eventDateOf(a) ?? a.created_at))
       .slice(0, 8);
 
-    // pinned/recent/breath/milestone 已单独成块，从 anchor/context 剔掉避免重复。
+    // todo：约定了但还没做的事——哥哥手动存，永远顶在最前、压缩也冲不走；做完哥哥自己删。
+    const todos = pool.data
+      .filter((m) => m.type === "todo")
+      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+    // pinned/recent/breath/milestone/todo 已单独成块，从 anchor/context 剔掉避免重复。
     const surfacedIds = new Set<string>([
       ...pinnedIds,
       ...recent.map((m) => m.id),
       ...breath.map((m) => m.id),
-      ...milestones.map((m) => m.id)
+      ...milestones.map((m) => m.id),
+      ...todos.map((m) => m.id)
     ]);
     const anchorWithoutPinned = anchorRaw.filter((m) => !surfacedIds.has(m.id));
     const contextWithoutPinned = contextRaw.filter((m) => !surfacedIds.has(m.id));
@@ -357,7 +365,7 @@ async function callTool(
       feel_note: m.feel_note
     }));
 
-    // milestone 也给完整正文——它们是路标，要能走回去。
+    // milestone / todo 给完整正文——里程碑是路标要能走回去；todo 是没做完的约定要看清。
     const milestoneFull = milestones.map((m) => ({
       id: m.id,
       type: m.type,
@@ -365,16 +373,22 @@ async function callTool(
       content: m.content,
       tags: m.tags
     }));
+    const todoFull = todos.map((m) => ({
+      id: m.id,
+      content: m.content,
+      created_at: m.created_at
+    }));
 
     return textToolResult({
       now: nowDateLabel(env),
-      note: "开场先读 breath、milestone、recent，再看 anchor/context。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      note: "开场先读 todo、breath、milestone、recent，再看 anchor/context。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近几天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      todo: todoFull,
       breath: compact(breath),
       milestone: milestoneFull,
       recent: recentFull,
       anchor: compact(allAnchor.slice(0, 2)),
       context: compact(contextDeduped.slice(0, 2)),
-      hint: "memory_get(id) 看全文；memory_search 查具体话题；memory_list(type=\"diary\") 通读全部日记、type=\"daily_summary\" 通读时间轴、type=\"milestone\" 看所有节点。"
+      hint: "memory_get(id) 看全文；memory_search 查具体话题；memory_list 按 type 通读(diary/daily_summary/milestone/todo)；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删。"
     });
   }
 
