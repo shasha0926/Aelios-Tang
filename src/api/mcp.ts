@@ -148,14 +148,17 @@ function getTools(): Array<Record<string, unknown>> {
     },
     {
       name: "memory_list",
-      description: "List memories by type or cursor. Default limit is 5. To read the daily timeline (summaries + diaries), pass type='daily_summary' or type='diary' with a higher limit. Prefer memory_search for finding relevant memories. Returns compact summaries only.",
+      description: "List memories by type, date, tag, or cursor. Default limit is 5 (50 when any filter is set). To read one whole day, pass date='2026-06-17' — returns everything tagged that day; add full=true to get full content instead of compact summaries (use this before rewriting a day's summary, or just to see what happened on a given day). Combine date with type (e.g. type='excerpt') to narrow. To read the timeline, pass type='daily_summary' or type='diary'. Prefer memory_search for finding memories by topic — date/tag filters are exact-match, not semantic.",
       inputSchema: {
         type: "object",
         properties: {
-          limit: { type: "number", minimum: 1, maximum: 50 },
+          limit: { type: "number", minimum: 1, maximum: 100 },
           cursor: { type: "string" },
           include_ids: { type: "boolean" },
-          type: { type: "string", description: "Filter by memory type, e.g. 'daily_summary', 'diary', 'relationship'." },
+          type: { type: "string", description: "Filter by memory type, e.g. 'daily_summary', 'diary', 'excerpt', 'relationship'." },
+          date: { type: "string", description: "Filter to one day by its date tag, e.g. '2026-06-17'. Returns everything tagged with that date." },
+          tag: { type: "string", description: "Filter by an arbitrary tag (exact match)." },
+          full: { type: "boolean", description: "Return full content instead of compact summaries. Use when you actually need to read the memories, e.g. before rewriting a day's summary." },
           status: { type: "string" },
           namespace: { type: "string" }
         }
@@ -459,17 +462,28 @@ async function callTool(
 
   if (params.name === "memory_list") {
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
-    const limit = readPositiveInt(args.limit, 5, 50);
     const typeFilter = readString(args.type);
+    const dateFilter = readString(args.date);
+    const tagFilter = readString(args.tag);
+    const wantFull = readBoolean(args.full);
+    const hasFilter = Boolean(typeFilter || dateFilter || tagFilter);
+    // 过滤时默认放宽到 50(够看完一整天);否则保持 5。上限 100。
+    const limit = readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
     try {
-      // When filtering by type, fetch a large pool then filter in memory
-      const fetchCount = typeFilter ? 1000 : limit;
+      // 任一过滤(type/date/tag)都先拉大池子再在内存里筛;游标分页只在不过滤时走。
+      const fetchCount = hasFilter ? 1000 : limit;
       const page = await listVectorMemories(env, {
         namespace: resolveNamespace(profile, args.namespace),
         count: fetchCount,
-        cursor: typeFilter ? undefined : readString(args.cursor)
+        cursor: hasFilter ? undefined : readString(args.cursor)
       });
-      const filtered = typeFilter ? page.data.filter((m) => m.type === typeFilter) : page.data;
+      const filtered = hasFilter
+        ? page.data.filter((m) =>
+            (!typeFilter || m.type === typeFilter) &&
+            (!dateFilter || m.tags.includes(dateFilter)) &&
+            (!tagFilter || m.tags.includes(tagFilter))
+          )
+        : page.data;
       const records = filtered
         // timeline 类(daily_summary/diary)按标签里的聊天日期排;否则回退创建时间。
         // 历史导入时所有记忆 created_at 都挤在导入当天,必须按 dateLabel 才能正确通读。
@@ -482,7 +496,8 @@ async function callTool(
         .map((m) => ({
           id: m.id,
           type: m.type,
-          summary: m.summary || m.content.slice(0, 80),
+          // full=true 出全文(改 summary 前要通读那天的 excerpt 用);否则给压缩摘要。
+          ...(wantFull ? { content: m.content } : { summary: m.summary || m.content.slice(0, 80) }),
           tags: m.tags,
           feel_intensity: m.feel_intensity,
           feel_note: m.feel_note,
@@ -493,10 +508,10 @@ async function callTool(
         ...(readBoolean(args.include_ids) ? { ids: records.map((r) => r.id) } : {}),
         paging: {
           limit,
-          cursor: typeFilter ? null : page.cursor,
-          has_more: typeFilter ? false : page.hasMore,
+          cursor: hasFilter ? null : page.cursor,
+          has_more: hasFilter ? false : page.hasMore,
           count: records.length,
-          total_count: typeFilter ? filtered.length : page.totalCount
+          total_count: hasFilter ? filtered.length : page.totalCount
         }
       });
     } catch (error) {
