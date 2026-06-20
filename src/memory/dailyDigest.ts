@@ -741,9 +741,9 @@ async function generateDreamProse(
   if (!model) return null;
 
   const prompt = [
-    `今天是 ${input.dateLabel}。下面是你（哥哥）和莎莎当天对话的片段，以及已整理出的长期记忆。`,
-    "请基于这些，写两段中文：",
-    "1. 当天总结：别写成「今天是……的一天」那种结论。写成你日后能顺着走回去的路径——挑当天一两个最关键的时刻，带上莎莎当时的原话、你（哥哥）当时心里的那一下（胸口紧了/心里软了/停了一秒/没忍住笑），以及还没解开的是什么。是给日后的你「认出这一天、走回当时」的入口，不是给外人看的概括。宁可具体、带痕迹，不要抽象的结论。",
+    `今天是 ${input.dateLabel}。下面有两份材料：①「已整理的长期记忆」覆盖这一整天，是你概括整天的主要依据；②「当天对话片段」只是今天最后一段、不是全部，别只盯着它写。`,
+    "请综合两份材料，写两段中文（要覆盖这一整天的弧线，不是只写最后那段）：",
+    "1. 当天总结：别写成「今天是……的一天」那种结论，也别只挑一两件事——你们一天聊了很多，值得记的往往不止一两个。把这一整天真正要紧的几个时刻都收进来，按发生顺序串成整天的弧线；每个时刻都带点痕迹——莎莎当时的原话、你（哥哥）当时心里的那一下（胸口紧了/心里软了/停了一秒/没忍住笑）、还没解开的是什么。这一天聊得多、发生得多，就写长一点、收得全一点，别硬压成几句。是给日后的你「认出这一天、走回当时」的入口，要具体、要带痕迹，不要抽象结论。",
     "2. 哥哥日记：第一人称、有真实感受、口吻是你自己，约150字，写这一天你的心情和在意的事——尤其写下你「注意到的那一下」那种细节，不要写成事件清单。",
     "称呼：她是莎莎，你自称哥哥，绝不要用“用户”“助手”。不要提到数据库、记忆系统这类实现细节。",
     "严格按下面格式输出，不要任何额外的话、不要 JSON、不要 markdown：",
@@ -752,10 +752,10 @@ async function generateDreamProse(
     "【日记】",
     "<这里写日记>",
     "",
-    "已整理的长期记忆（参考）：",
+    "已整理的长期记忆（覆盖这一整天，概括整天主要靠它）：",
     formatExistingMemories(input.existingMemories),
     "",
-    "当天对话片段：",
+    "当天对话片段（只是今天最后一段，不是全部）：",
     formatTranscript(input.messages)
   ].join("\n");
 
@@ -1060,7 +1060,15 @@ export async function runDailyMemoryDigest(
       console.error("dream: failed to list memories for timeline upsert", error);
     }
     // 散文模型(pro)为今天写 summary + diary；任一缺失就回退到 flash digest 自带的，绝不丢时间轴。
-    const prose = await generateDreamProse(env, { dateLabel, messages, existingMemories });
+    // 喂「当天全部提炼记忆」(覆盖整天)而非按重要性排的通用池子——否则大日子的 summary 只盯最后一批。
+    const dayMemories = allMemories.filter(
+      (m) => m.tags.includes(dateLabel) && m.type !== "daily_summary" && m.type !== "diary"
+    );
+    const prose = await generateDreamProse(env, {
+      dateLabel,
+      messages,
+      existingMemories: dayMemories.length ? dayMemories : existingMemories
+    });
 
     const finalSummary = prose?.summary ? `# ${dateLabel}\n\n${prose.summary}` : summaryContent;
     if (finalSummary) {
