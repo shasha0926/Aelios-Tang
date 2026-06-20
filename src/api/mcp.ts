@@ -324,7 +324,8 @@ async function callTool(
     // todo：约定了但还没做的事——哥哥手动存，永远顶在最前、压缩也冲不走；做完哥哥自己删。
     const todos = pool.data
       .filter((m) => m.type === "todo")
-      .sort((a, b) => a.created_at.localeCompare(b.created_at));
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, 10); // 防御:todo 正常是个位数,但别让它无上限把全文全塞进开场
 
     // pinned/recent/breath/milestone/todo 已单独成块，从 anchor/context 剔掉避免重复。
     const surfacedIds = new Set<string>([
@@ -352,7 +353,6 @@ async function callTool(
         type: m.type,
         summary: m.summary || m.content.slice(0, 80),
         date: eventDateOf(m),
-        tags: m.tags,
         feel_intensity: m.feel_intensity,
         feel_note: m.feel_note,
         created_at: m.created_at,
@@ -373,8 +373,7 @@ async function callTool(
       id: m.id,
       type: m.type,
       date: eventDateOf(m),
-      content: m.content,
-      tags: m.tags
+      content: m.content
     }));
     const todoFull = todos.map((m) => ({
       id: m.id,
@@ -413,7 +412,6 @@ async function callTool(
           type: m.type,
           summary: m.summary || m.content.slice(0, 80),
           date: eventDateOf(m),
-          tags: m.tags,
           feel_intensity: m.feel_intensity,
           feel_note: m.feel_note,
           created_at: m.created_at,
@@ -421,7 +419,14 @@ async function callTool(
         }))
       });
     }
-    return textToolResult({ data });
+    // full=true 出全文:封顶 8 条防灌爆上下文(topK 默认 50,不设限会把几十条全文全塞进来)。
+    const FULL_CAP = 8;
+    return textToolResult({
+      data: data.slice(0, FULL_CAP),
+      ...(data.length > FULL_CAP
+        ? { note: `命中 ${data.length} 条,只返回前 ${FULL_CAP} 条全文。缩小 query、加 types 过滤,或去掉 full 看紧凑摘要。` }
+        : {})
+    });
   }
 
   if (params.name === "memory_create") {
@@ -499,9 +504,9 @@ async function callTool(
         .map((m) => ({
           id: m.id,
           type: m.type,
+          date: eventDateOf(m),
           // full=true 出全文(改 summary 前要通读那天的 excerpt 用);否则给压缩摘要。
           ...(wantFull ? { content: m.content } : { summary: m.summary || m.content.slice(0, 80) }),
-          tags: m.tags,
           feel_intensity: m.feel_intensity,
           feel_note: m.feel_note,
           created_at: m.created_at
