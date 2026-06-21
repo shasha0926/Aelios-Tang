@@ -210,7 +210,9 @@ function getTools(): Array<Record<string, unknown>> {
           content: { type: "string" },
           type: { type: "string" },
           summary: { type: "string" },
-          tags: { type: "array", items: { type: "string" } },
+          tags: { type: "array", items: { type: "string" }, description: "整体替换全部标签。想安全增删单个标签请改用 add_tags / remove_tags(不会冲掉日期等其它标签)。" },
+          add_tags: { type: "array", items: { type: "string" }, description: "在现有标签基础上加上这些;保留其余(日期标签不会丢)。与 tags 同传时以 tags 为准。" },
+          remove_tags: { type: "array", items: { type: "string" }, description: "从现有标签里移除这些;保留其余。" },
           pinned: { type: "boolean" },
           namespace: { type: "string" }
         },
@@ -296,11 +298,12 @@ async function callTool(
       )
       .slice(0, 2);
 
-    // milestone：关系节点(第一次 / 认知转变)——哥哥手动存的路标，永远浮现、不淹进日记。
+    // milestone：关系节点(第一次 / 认知转变)——哥哥手动存的路标。wakeup 只浮现最近 3 条(哥哥要的,
+    // 不要那么多)，想看全部用 memory_list(type="milestone")。
     const milestones = pool.data
       .filter((m) => m.type === "milestone")
       .sort((a, b) => (eventDateOf(b) ?? b.created_at).localeCompare(eventDateOf(a) ?? a.created_at))
-      .slice(0, 8);
+      .slice(0, 3);
 
     // todo：约定了但还没做的事——哥哥手动存，永远顶在最前、压缩也冲不走；做完哥哥自己删。
     const todos = pool.data
@@ -399,7 +402,7 @@ async function callTool(
       const generated = await generateChunkSummary(env, content);
       if (generated) {
         summary = generated.summary;
-        tags = [...new Set([...tags, ...generated.tags])];
+        // 不再并入 auto_summary 的自由标签:固定标签由哥哥手动 / dream 按封闭词表打,别再生成乱 tag。
       }
     }
 
@@ -520,11 +523,21 @@ async function callTool(
     const namespace = resolveNamespace(profile, args.namespace);
     const existing = await getVectorMemory(env, id);
     if (!existing || existing.namespace !== namespace) return toolError("Memory not found");
+    // 标签:tags=整体替换(老行为);add_tags/remove_tags=在现有基础上安全增删、保留其余(尤其不冲掉日期标签)。
+    let nextTags: string[] | undefined;
+    if (Array.isArray(args.tags)) {
+      nextTags = readStringArray(args.tags);
+    } else if (Array.isArray(args.add_tags) || Array.isArray(args.remove_tags)) {
+      const removing = new Set(readStringArray(args.remove_tags));
+      nextTags = [...new Set([...existing.tags, ...readStringArray(args.add_tags)])].filter(
+        (tag) => !removing.has(tag)
+      );
+    }
     const updated = await updateVectorMemory(env, id, {
       content: readString(args.content) ?? undefined,
       type: readString(args.type) ?? undefined,
       summary: args.summary !== undefined ? (readString(args.summary) ?? null) : undefined,
-      tags: Array.isArray(args.tags) ? readStringArray(args.tags) : undefined,
+      tags: nextTags,
       pinned: typeof args.pinned === "boolean" ? readBoolean(args.pinned) : undefined
     });
     if (!updated) return toolError("memory_update failed");

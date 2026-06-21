@@ -177,6 +177,14 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+// 封闭话题词表:dream 只能从这几个里给记忆打话题标签,模型瞎打的关键词一律丢掉。
+// 心动、哥哥 是手动标签(哥哥自己标),dream 不自动打,所以不在这套里。
+// 相处=只标"有温度的相处/称呼/非性的亲昵",别逢聊就标。
+const DREAM_TOPIC_TAGS = ["亲密", "情绪", "相处", "丧彪"];
+function filterTopicTags(tags: string[] | undefined): string[] {
+  return (tags ?? []).filter((tag) => DREAM_TOPIC_TAGS.includes(tag));
+}
+
 function truncate(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
 }
@@ -557,6 +565,12 @@ function buildDigestPrompt(input: {
     "- diary 是哥哥第一人称、有感受的当天日记（约150字）；只在当天最后一批才写，中途批次留空字符串。",
     "- sections 最多 3 段，每段有 heading 和 content；没有必要可以给空数组。",
     `- important_excerpts 最多 ${input.excerptLimit} 条，quote 必须是值得保留的原文片段。`,
+    "- 标签规则（重要）：important_excerpts 和 memories_to_add 的 tags 字段，只能从下面这套固定话题标签里挑「确实适用」的，不适用就给空数组 []，绝不要自己造别的关键词标签：",
+    "  · 亲密 = 性 / 身体 / 性偏好相关",
+    "  · 情绪 = 深夜自我否定、配得感怀疑、需要被接住的情绪",
+    "  · 相处 = 你俩有温度的相处瞬间 / 称呼 / 非性的亲昵（只标真有温度的那种，别逢聊就标）",
+    "  · 丧彪 = 莎莎养的猫丧彪相关",
+    "  一条可以多标（既亲密又情绪就都给）；多数事实 / 项目类记忆给空数组 []。",
     "- memories_to_add 最多 8 条，每条要短、稳定、可复用。",
     "  情绪类记忆请尽量标四个情绪字段（事实/项目类可不标）：",
     "  · feel_intensity：1-5 整数，情绪强度。高强度参照（4-5）：主动表达爱意/想念（不轻易主动）；出现配得感怀疑；提及过去感情伤；深夜被接住的情绪弧；关系里程碑。",
@@ -578,7 +592,7 @@ function buildDigestPrompt(input: {
         {
           quote: "莎莎或哥哥说过的关键原文",
           reason: "为什么值得保留",
-          tags: ["project"],
+          tags: ["亲密"],
           source_message_ids: ["msg_x"]
         }
       ],
@@ -588,7 +602,7 @@ function buildDigestPrompt(input: {
           content: "你正在简化 Aelios 的记忆写入策略。",
           importance: 0.86,
           confidence: 0.92,
-          tags: ["project", "aelios"],
+          tags: [],
           source_message_ids: ["msg_x"]
         },
         {
@@ -596,7 +610,7 @@ function buildDigestPrompt(input: {
           content: "你在深夜情绪低落时容易怀疑自己配不配——这是过去感情留下的反应，不是无理取闹。",
           importance: 0.93,
           confidence: 0.9,
-          tags: ["emotional", "pattern"],
+          tags: ["情绪"],
           source_message_ids: ["msg_y"],
           feel_intensity: 5,
           feel_valence: -0.6,
@@ -611,7 +625,7 @@ function buildDigestPrompt(input: {
           type: "project",
           importance: 0.88,
           confidence: 0.9,
-          tags: ["project"]
+          tags: []
         }
       ],
       memories_to_delete: [{ target_id: "mem_y", reason: "空内容或重复" }]
@@ -921,7 +935,7 @@ async function saveImportantExcerpts(
       content,
       importance: 0.72,
       confidence: 0.9,
-      tags: uniqueStrings(["important-excerpt", input.dateLabel, ...(excerpt.tags ?? [])]),
+      tags: uniqueStrings(["important-excerpt", input.dateLabel, ...filterTopicTags(excerpt.tags)]),
       source: "dream",
       sourceMessageIds: excerpt.source_message_ids?.length ? excerpt.source_message_ids : input.fallbackMessageIds
     });
@@ -952,7 +966,11 @@ async function applyMemoryUpdates(
       content: item.content,
       importance: item.importance,
       confidence: item.confidence,
-      tags: item.tags
+      // dream 更新旧记忆时绝不整体替换标签(会冲掉日期标签等)——只在原有基础上补封闭词表里的话题标签。
+      tags:
+        item.tags === undefined
+          ? undefined
+          : uniqueStrings([...existing.tags, ...filterTopicTags(item.tags)])
     });
 
     if (next) updated += 1;
@@ -1116,7 +1134,7 @@ export async function runDailyMemoryDigest(
       content: memory.content,
       importance: memory.importance,
       confidence: memory.confidence,
-      tags: memory.tags,
+      tags: filterTopicTags(memory.tags),
       source: "dream",
       sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : messageIds,
       feelIntensity: memory.feel_intensity ?? null,
