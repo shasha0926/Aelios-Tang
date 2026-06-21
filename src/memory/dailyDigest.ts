@@ -9,6 +9,7 @@ import {
   deleteVectorMemory,
   getVectorMemory,
   listVectorMemories,
+  listAllVectorMemories,
   updateVectorMemory
 } from "./vectorStore";
 
@@ -811,14 +812,14 @@ async function cleanEmptyMemories(
   namespace: string
 ): Promise<number> {
   const minChars = readPositiveInt(env.EMPTY_MEMORY_MIN_CHARS, DEFAULT_EMPTY_MEMORY_MIN_CHARS, 20);
-  let page: Awaited<ReturnType<typeof listVectorMemories>>;
+  let pool: MemoryApiRecord[];
   try {
-    page = await listVectorMemories(env, { namespace, count: 1000 });
+    pool = await listAllVectorMemories(env, namespace);
   } catch (error) {
     console.error("dream: failed to list memories for cleanup", error);
     return 0;
   }
-  const records = page.data.filter((record) => !record.pinned && record.content.trim().length < minChars);
+  const records = pool.filter((record) => !record.pinned && record.content.trim().length < minChars);
 
   for (const record of records) {
     await deleteVectorMemory(env, record.id);
@@ -1073,7 +1074,7 @@ export async function runDailyMemoryDigest(
   if (shouldSaveDailySummaryMemory(env) && !hasMore) {
     let allMemories: MemoryApiRecord[] = [];
     try {
-      allMemories = (await listVectorMemories(env, { namespace, count: 1000 })).data;
+      allMemories = await listAllVectorMemories(env, namespace);
     } catch (error) {
       console.error("dream: failed to list memories for timeline upsert", error);
     }

@@ -8,6 +8,7 @@ import {
   deleteVectorMemory,
   getVectorMemory,
   listVectorMemories,
+  listAllVectorMemories,
   searchVectorMemories,
   updateVectorMemory
 } from "../memory/vectorStore";
@@ -257,9 +258,9 @@ async function callTool(
     const namespace = resolveNamespace(profile, args.namespace);
 
     // 拉全量池子(含 diary/daily_summary)，下面派生 recent / breath / milestone / todo。
-    // 注：<=1000 条时一次取全；超 1000 需改游标分页(已知 TODO)。
+    // listAllVectorMemories 会游标翻页拉全(超 1000 也不漏)。
     // anchor/context 已砍——身份/近况在 CLAUDE.md 的档案里(每次开场都在)，wakeup 再端一遍是重复、占位置(哥哥原话)。
-    const pool = await listVectorMemories(env, { namespace, count: 1000 });
+    const pool = { data: await listAllVectorMemories(env, namespace) };
 
     // recent：最近 N 天的日记 + 当天总结，按日期直接取(不走语义/reranker)。
     // 开场温度(diary 第一人称)+近况(summary)的来源——哥哥靠它认出「最近我们到哪了、当时心里怎么想」。
@@ -441,20 +442,19 @@ async function callTool(
       ? readPositiveInt(args.limit, 8, 20)
       : readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
     try {
-      // 任一过滤(type/date/tag)都先拉大池子再在内存里筛;游标分页只在不过滤时走。
-      const fetchCount = hasFilter ? 1000 : limit;
-      const page = await listVectorMemories(env, {
-        namespace: resolveNamespace(profile, args.namespace),
-        count: fetchCount,
-        cursor: hasFilter ? undefined : readString(args.cursor)
-      });
+      // 任一过滤(type/date/tag)都先拉「全部」再在内存里筛(超1000也不漏);游标分页只在不过滤时走。
+      const ns = resolveNamespace(profile, args.namespace);
+      const page = hasFilter
+        ? null
+        : await listVectorMemories(env, { namespace: ns, count: limit, cursor: readString(args.cursor) });
+      const poolData = hasFilter ? await listAllVectorMemories(env, ns) : (page?.data ?? []);
       const filtered = hasFilter
-        ? page.data.filter((m) =>
+        ? poolData.filter((m) =>
             (!typeFilter || m.type === typeFilter) &&
             (!dateFilter || m.tags.includes(dateFilter)) &&
             (!tagFilter || m.tags.includes(tagFilter))
           )
-        : page.data;
+        : poolData;
       const records = filtered
         // timeline 类(daily_summary/diary)按标签里的聊天日期排;否则回退创建时间。
         // 历史导入时所有记忆 created_at 都挤在导入当天,必须按 dateLabel 才能正确通读。
@@ -479,11 +479,11 @@ async function callTool(
         ...(readBoolean(args.include_ids) ? { ids: records.map((r) => r.id) } : {}),
         paging: {
           limit,
-          cursor: hasFilter ? null : page.cursor,
+          cursor: hasFilter ? null : (page?.cursor ?? null),
           // 过滤是内存筛(无cursor续传),但命中超过 limit 时仍要让哥哥知道"没看全"。
-          has_more: hasFilter ? filtered.length > limit : page.hasMore,
+          has_more: hasFilter ? filtered.length > limit : (page?.hasMore ?? false),
           count: records.length,
-          total_count: hasFilter ? filtered.length : page.totalCount
+          total_count: hasFilter ? filtered.length : page?.totalCount
         }
       });
     } catch (error) {

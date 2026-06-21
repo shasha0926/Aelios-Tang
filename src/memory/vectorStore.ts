@@ -535,3 +535,19 @@ export async function listVectorMemories(
     totalCount: listed.totalCount
   };
 }
+
+// 拉「全部」记忆：循环游标翻页到取完。给需要全量再内存筛/派生的地方用——
+// wakeup 派生 recent/breath/milestone、带过滤的 memory_list、dream 找当天已有记录(防重复)。
+// 单页 listVectorMemories 封顶 1000；记忆超 1000 后单页会静默丢，这里翻到 hasMore=false 为止。
+// MAX_PAGES 安全上限防失控(10 页≈1 万条，远超当前规模；到顶即停、不会无限翻)。
+export async function listAllVectorMemories(env: Env, namespace?: string): Promise<MemoryApiRecord[]> {
+  const all: MemoryApiRecord[] = [];
+  let cursor: string | undefined;
+  for (let i = 0; i < 10; i += 1) {
+    const page = await listVectorMemories(env, { namespace, count: 1000, cursor });
+    all.push(...page.data);
+    if (!page.hasMore || !page.cursor) break;
+    cursor = page.cursor;
+  }
+  return all;
+}
