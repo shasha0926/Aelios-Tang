@@ -225,14 +225,16 @@ export async function saveIngestMessages(
 ): Promise<string[]> {
   const ids: string[] = [];
 
-  // 幂等去重(根治回流重复爆炸):给每条算稳定指纹(会话+角色+正文+时间),同一条重发指纹不变。
-  // 先批量查出已在库的指纹(client_message_hash 列有索引 idx_messages_hash,快),只插新的。
-  // 这样客户端 reflux 不管怎么跨 session/compact 重发,数据库都只存一条——彻底断根。
+  // 幂等去重(根治回流重复爆炸):给每条算稳定指纹 = sha256(角色:正文:时间)。
+  // ⚠️ 指纹**绝不含 conversation_id/session_id**——爆炸的真实机制就是 compact/resume/换手机
+  // 产生新 session、把整条 transcript 重发;只有指纹跨 session 一致,才能把这些重发去掉。
+  // 先批量查已在库的指纹(client_message_hash 列有索引 idx_messages_hash,快),只插新的。
+  // 这样客户端不管怎么跨 session/compact/远程重发,数据库都只存一条——彻底断根。
   const prepared: Array<{ id: string; role: string; content: string; createdAt: string; hash: string }> = [];
   for (const message of input.messages) {
     const content = contentToText(message.content);
     if (!content) continue;
-    const hash = await sha256Hex(`${input.conversationId}:${message.role}:${content}:${message.created_at ?? ""}`);
+    const hash = await sha256Hex(`${message.role}:${content}:${message.created_at ?? ""}`);
     prepared.push({
       id: newId("msg"),
       role: message.role,
