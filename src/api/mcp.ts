@@ -39,15 +39,19 @@ function eventDateOf(memory: { tags?: string[] }): string | null {
 // 今天的日期(按 dream 时区)。给召回结果加「现在」锚点，防止把过去的回忆当成此刻。
 function nowDateLabel(env: Env): string {
   const tz = env.DREAM_TIME_ZONE || "Asia/Singapore";
+  // 必须跟 dream 的日界线一致:某天 = 7:00~次日 7:00(见 dailyDigest DAY_START_HOUR=7)。
+  // 回拨 7 小时再取日历日 = 当前进行中的 dream 日。否则凌晨(0-7点)手写的 diary/记忆会被
+  // 错标到次日,还会误触发 dream 的"让位"守卫、把次日真正的 diary 吃掉。
+  const shifted = new Date(Date.now() - 7 * 60 * 60 * 1000);
   try {
     return new Intl.DateTimeFormat("en-CA", {
       timeZone: tz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit"
-    }).format(new Date());
+    }).format(shifted);
   } catch {
-    return new Date().toISOString().slice(0, 10);
+    return shifted.toISOString().slice(0, 10);
   }
 }
 
