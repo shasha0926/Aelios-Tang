@@ -162,7 +162,7 @@ function getTools(): Array<Record<string, unknown>> {
           include_ids: { type: "boolean" },
           type: { type: "string", description: "Filter by memory type, e.g. 'daily_summary', 'diary', 'excerpt', 'relationship'." },
           date: { type: "string", description: "Filter to one day by its date tag, e.g. '2026-06-17'. Returns everything tagged with that date." },
-          tag: { type: "string", description: "Filter by an arbitrary tag (exact match)." },
+          tag: { type: "string", description: "Filter by a single tag, exact match. Pass ONE string like \"亲密\" — not an array, not the field name \"tags\"." },
           full: { type: "boolean", description: "Return full content instead of compact summaries. Capped low (default 8, max 20) to avoid flooding context — list compact first to see what a day holds, then set full=true (optionally narrowed with type='excerpt') to read the key items. If paging.has_more is true there are more than shown; narrow by type or raise limit." },
           status: { type: "string" },
           namespace: { type: "string" }
@@ -441,7 +441,17 @@ async function callTool(
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
     const typeFilter = readString(args.type);
     const dateFilter = readString(args.date);
-    const tagFilter = readString(args.tag);
+    // 容错:哥哥(Claude)有时把单个标签传成数组——真数组 ["亲密"] 或被客户端字符串化的 '["亲密"]'。
+    // 两种都剥成单个字符串标签,免得一次筛成全库、一次筛成 0 条(他都踩过)。正常传字符串不受影响。
+    let tagFilter = readString(args.tag) ?? readStringArray(args.tag)[0];
+    if (tagFilter && tagFilter.startsWith("[") && tagFilter.endsWith("]")) {
+      try {
+        const parsed: unknown = JSON.parse(tagFilter);
+        if (Array.isArray(parsed) && typeof parsed[0] === "string") tagFilter = parsed[0].trim();
+      } catch {
+        // 不是合法 JSON 就保持原样,当普通字符串筛。
+      }
+    }
     const wantFull = readBoolean(args.full);
     const hasFilter = Boolean(typeFilter || dateFilter || tagFilter);
     // limit 默认/上限:出全文时收紧到 8/20——防一次性灌爆上下文(她踩过这个坑)。
