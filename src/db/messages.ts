@@ -225,28 +225,61 @@ export async function saveIngestMessages(
 ): Promise<string[]> {
   const ids: string[] = [];
 
+  // 幂等去重(根治回流重复爆炸):给每条算稳定指纹(会话+角色+正文+时间),同一条重发指纹不变。
+  // 先批量查出已在库的指纹(client_message_hash 列有索引 idx_messages_hash,快),只插新的。
+  // 这样客户端 reflux 不管怎么跨 session/compact 重发,数据库都只存一条——彻底断根。
+  const prepared: Array<{ id: string; role: string; content: string; createdAt: string; hash: string }> = [];
   for (const message of input.messages) {
     const content = contentToText(message.content);
     if (!content) continue;
+    const hash = await sha256Hex(`${input.conversationId}:${message.role}:${content}:${message.created_at ?? ""}`);
+    prepared.push({
+      id: newId("msg"),
+      role: message.role,
+      content,
+      createdAt: message.created_at ?? nowIso(),
+      hash
+    });
+  }
+  if (prepared.length === 0) return ids;
 
-    const id = newId("msg");
-    ids.push(id);
+  const seen = new Set<string>();
+  const CHUNK = 100;
+  for (let i = 0; i < prepared.length; i += CHUNK) {
+    const slice = prepared.slice(i, i + CHUNK);
+    const placeholders = slice.map(() => "?").join(", ");
+    const rows = await db
+      .prepare(
+        `SELECT client_message_hash FROM messages
+         WHERE namespace = ? AND client_message_hash IN (${placeholders})`
+      )
+      .bind(input.namespace, ...slice.map((p) => p.hash))
+      .all<{ client_message_hash: string }>();
+    for (const r of rows.results ?? []) {
+      if (r.client_message_hash) seen.add(r.client_message_hash);
+    }
+  }
 
+  for (const p of prepared) {
+    if (seen.has(p.hash)) continue; // 已在库 → 跳过(幂等)
+    seen.add(p.hash); // 同一批内自重复也只入一次
+    ids.push(p.id);
     await db
       .prepare(
         `INSERT INTO messages (
-          id, conversation_id, namespace, role, content, source, stream, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          id, conversation_id, namespace, role, content, source, client_message_hash, stream, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .bind(
-        id,
+        p.id,
         input.conversationId,
         input.namespace,
-        message.role,
-        content,
+        p.role,
+        p.content,
         input.source,
+        p.hash,
         0,
-        message.created_at ?? nowIso()
+        p.createdAt
       )
       .run();
   }
