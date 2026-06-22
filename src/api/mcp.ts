@@ -214,6 +214,7 @@ function getTools(): Array<Record<string, unknown>> {
           content: { type: "string" },
           type: { type: "string" },
           summary: { type: "string" },
+          append: { type: "string", description: "年轮:把这段新感受作为带日期的批注追加到原文末尾、不覆盖原文——重读旧记忆有新想法时挂在那条下面,不另起新条目。与 content 同传时以 content 为准。" },
           tags: { type: "array", items: { type: "string" }, description: "整体替换全部标签。想安全增删单个标签请改用 add_tags / remove_tags(不会冲掉日期等其它标签)。" },
           add_tags: { type: "array", items: { type: "string" }, description: "在现有标签基础上加上这些;保留其余(日期标签不会丢)。与 tags 同传时以 tags 为准。" },
           remove_tags: { type: "array", items: { type: "string" }, description: "从现有标签里移除这些;保留其余。" },
@@ -537,8 +538,14 @@ async function callTool(
         (tag) => !removing.has(tag)
       );
     }
+    // 年轮:append=把新感受作为带日期批注追加到原文末尾(不覆盖);content(整体替换)优先于 append。
+    let nextContent: string | undefined = readString(args.content) ?? undefined;
+    const appendText = readString(args.append);
+    if (!nextContent && appendText) {
+      nextContent = `${existing.content.trimEnd()}\n\n―― ${nowDateLabel(env)} 再读 ――\n${appendText}`;
+    }
     const updated = await updateVectorMemory(env, id, {
-      content: readString(args.content) ?? undefined,
+      content: nextContent,
       type: readString(args.type) ?? undefined,
       summary: args.summary !== undefined ? (readString(args.summary) ?? null) : undefined,
       tags: nextTags,
