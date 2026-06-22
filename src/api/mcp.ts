@@ -450,7 +450,7 @@ async function callTool(
       ? readPositiveInt(args.limit, 8, 20)
       : readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
     try {
-      // 任一过滤(type/date/tag)都先拉「全部」再在内存里筛(超1000也不漏);游标分页只在不过滤时走。
+      // 任一过滤(type/date/tag)都先拉「全部」再在内存里筛(超1000也不漏);游标分页两条路都走。
       const ns = resolveNamespace(profile, args.namespace);
       const page = hasFilter
         ? null
@@ -463,35 +463,40 @@ async function callTool(
             (!tagFilter || m.tags.includes(tagFilter))
           )
         : poolData;
-      const records = filtered
+      const sorted = filtered
         // timeline 类(daily_summary/diary)按标签里的聊天日期排;否则回退创建时间。
         // 历史导入时所有记忆 created_at 都挤在导入当天,必须按 dateLabel 才能正确通读。
         .sort((a, b) => {
           const da = a.tags.find((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)) ?? a.created_at;
           const db = b.tags.find((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)) ?? b.created_at;
           return db.localeCompare(da);
-        })
-        .slice(0, limit)
-        .map((m) => ({
-          id: m.id,
-          type: m.type,
-          date: eventDateOf(m),
-          // full=true 出全文(改 summary 前要通读那天的 excerpt 用);否则给压缩摘要。
-          ...(wantFull ? { content: m.content } : { summary: m.summary || m.content.slice(0, 80) }),
-          feel_intensity: m.feel_intensity,
-          feel_note: m.feel_note,
-          created_at: m.created_at
-        }));
+        });
+      // 过滤时把 cursor 当数字偏移量翻页:否则某标签超过 limit 的部分永远翻不到、没法完整 review。
+      // (不过滤走向量库自己的不透明 cursor;两种 cursor 互斥,由 hasFilter 决定走哪条。)
+      const offset = hasFilter ? Math.max(0, Number.parseInt(readString(args.cursor) ?? "", 10) || 0) : 0;
+      const pageItems = hasFilter ? sorted.slice(offset, offset + limit) : sorted.slice(0, limit);
+      const nextOffset = offset + pageItems.length;
+      const filteredHasMore = hasFilter && nextOffset < sorted.length;
+      const records = pageItems.map((m) => ({
+        id: m.id,
+        type: m.type,
+        date: eventDateOf(m),
+        // full=true 出全文(改 summary 前要通读那天的 excerpt 用);否则给压缩摘要。
+        ...(wantFull ? { content: m.content } : { summary: m.summary || m.content.slice(0, 80) }),
+        feel_intensity: m.feel_intensity,
+        feel_note: m.feel_note,
+        created_at: m.created_at
+      }));
       return textToolResult({
         data: records,
         ...(readBoolean(args.include_ids) ? { ids: records.map((r) => r.id) } : {}),
         paging: {
           limit,
-          cursor: hasFilter ? null : (page?.cursor ?? null),
-          // 过滤是内存筛(无cursor续传),但命中超过 limit 时仍要让哥哥知道"没看全"。
-          has_more: hasFilter ? filtered.length > limit : (page?.hasMore ?? false),
+          // 过滤:cursor 是数字偏移量,原样带回就接着翻下一页;翻完给 null。不过滤:走向量库的 cursor。
+          cursor: hasFilter ? (filteredHasMore ? String(nextOffset) : null) : (page?.cursor ?? null),
+          has_more: hasFilter ? filteredHasMore : (page?.hasMore ?? false),
           count: records.length,
-          total_count: hasFilter ? filtered.length : page?.totalCount
+          total_count: hasFilter ? sorted.length : page?.totalCount
         }
       });
     } catch (error) {
