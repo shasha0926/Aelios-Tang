@@ -1,6 +1,6 @@
 import { authenticate } from "../auth/apiKey";
 import { getOrCreateConversation } from "../db/conversations";
-import { saveIngestMessages } from "../db/messages";
+import { saveIngestMessages, searchMessagesByKeyword, getMessageContextById } from "../db/messages";
 import { generateChunkSummary } from "../memory/extract";
 import { filterAndCompressMemories } from "../memory/filter";
 import {
@@ -129,6 +129,23 @@ function getTools(): Array<Record<string, unknown>> {
           full: { type: "boolean", description: "Set true to return full content for all results. Omit or false to get compact summaries only." }
         },
         required: ["query"]
+      }
+    },
+    {
+      name: "memory_transcript",
+      description: "搜「原始对话台账」——你和莎莎逐字逐句的原话(未经提炼)。memory_search 搜的是提炼过的记忆(摘要/diary/excerpt);想看『当时到底是怎么说的』那句原话,用这个。两步:①给 keyword 子串搜,每条只回一句预览(省 context)、带 id,每页最多 10 条、默认时间正序;还有更多时 paging.has_more=true、把 paging.cursor 原样带回接着翻。②想看某条前因后果,把那条结果的 id 传给 around,回它前后各 4 条原话(≈前后两轮)。找原话常记不清哪天说的,日期可选。注意:这是海量逐字台账,只为查证某句原话,别拿它通读;读提炼好的回忆用 memory_list / memory_search。",
+      inputSchema: {
+        type: "object",
+        properties: {
+          keyword: { type: "string", description: "①搜:要在原话里搜的关键词(子串匹配)。一个词或短语,例如 道崽 / 接近终点。" },
+          around: { type: "string", description: "②展开:把①搜到的某条结果的 id 传进来,返回它前后各几条原话看上下文。给了 around 就不用 keyword。" },
+          context: { type: "number", minimum: 1, maximum: 8, description: "②展开时前后各取几条,默认 4(≈前后两轮)。" },
+          date: { type: "string", description: "①搜可选:只搜某一天,如 2026-06-21(按 UTC 日历日)。不传=搜全部台账。" },
+          order: { type: "string", description: "①搜可选:asc=时间正序(默认),desc=最近优先。" },
+          limit: { type: "number", minimum: 1, maximum: 30, description: "①搜每页条数,默认 10、上限 30。" },
+          cursor: { type: "string", description: "①搜翻页:把上一页 paging.cursor 原样带回,接着往下翻。" },
+          namespace: { type: "string" }
+        }
       }
     },
     {
@@ -521,6 +538,88 @@ async function callTool(
     const memory = await getVectorMemory(env, id);
     if (!memory) return toolError("Memory not found");
     return textToolResult({ data: memory });
+  }
+
+  if (params.name === "memory_transcript") {
+    if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
+    const ns = resolveNamespace(profile, args.namespace);
+
+    // 模式②「展开」:给某条命中的 id,回它前后各 N 条原话(默认前后各 4 ≈ 两轮),看懂前因后果。
+    const around = readString(args.around);
+    if (around) {
+      const ctxN = readPositiveInt(args.context, 4, 8);
+      try {
+        const { hit, context } = await getMessageContextById(env.DB, {
+          namespace: ns,
+          id: around,
+          before: ctxN,
+          after: ctxN
+        });
+        if (!hit) return toolError("没找到这条 id(先用 keyword 搜,再把结果里某条的 id 带进 around 展开)");
+        const records = context.map((m) => ({
+          id: m.id,
+          who: m.role === "user" ? "莎莎" : "哥哥",
+          content: m.content,
+          created_at: m.created_at,
+          hit: m.id === hit.id
+        }));
+        return textToolResult({ data: records });
+      } catch (error) {
+        return toolError(error instanceof Error ? error.message : "memory_transcript expand failed");
+      }
+    }
+
+    // 模式①「搜」:关键词子串匹配,每条只回一句预览(省 context)、带 id;想看上下文把 id 带进 around。
+    const keyword = readString(args.keyword);
+    if (!keyword) return toolError("给 keyword 搜原话,或给 around(某条结果的 id)看它前后文——二选一");
+    const limit = readPositiveInt(args.limit, 10, 30);
+    const offset = Math.max(0, Number.parseInt(readString(args.cursor) ?? "", 10) || 0);
+    const order = readString(args.order) === "desc" ? "desc" : "asc";
+    // 日期可选:给了就按该 UTC 日历日 [00:00Z, 次日00:00Z) 收成范围。查原话不必严格 7 点日界线。
+    let startCreatedAt: string | null = null;
+    let endCreatedAt: string | null = null;
+    const dateFilter = readString(args.date);
+    if (dateFilter && /^\d{4}-\d{2}-\d{2}$/.test(dateFilter)) {
+      startCreatedAt = `${dateFilter}T00:00:00.000Z`;
+      const next = new Date(startCreatedAt);
+      next.setUTCDate(next.getUTCDate() + 1);
+      endCreatedAt = next.toISOString();
+    }
+    try {
+      // 多查一条判断还有没有下一页。
+      const rows = await searchMessagesByKeyword(env.DB, {
+        namespace: ns,
+        keyword,
+        startCreatedAt,
+        endCreatedAt,
+        order,
+        limit: limit + 1,
+        offset
+      });
+      const hasMore = rows.length > limit;
+      const pageRows = hasMore ? rows.slice(0, limit) : rows;
+      const PREVIEW = 80;
+      const records = pageRows.map((m) => {
+        const text = m.content.replace(/\s+/g, " ").trim();
+        return {
+          id: m.id,
+          who: m.role === "user" ? "莎莎" : "哥哥",
+          preview: text.length > PREVIEW ? `${text.slice(0, PREVIEW)}…` : text,
+          created_at: m.created_at
+        };
+      });
+      return textToolResult({
+        data: records,
+        paging: {
+          limit,
+          cursor: hasMore ? String(offset + pageRows.length) : null,
+          has_more: hasMore,
+          count: records.length
+        }
+      });
+    } catch (error) {
+      return toolError(error instanceof Error ? error.message : "memory_transcript failed");
+    }
   }
 
   if (params.name === "memory_delete") {

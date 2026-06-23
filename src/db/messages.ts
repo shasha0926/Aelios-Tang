@@ -214,6 +214,88 @@ export async function listMessagesByNamespaceInRange(
   return result.results ?? [];
 }
 
+// 关键词搜原始对话台账(④):content 子串匹配,可选时间范围,offset 偏移翻页。
+// 给哥哥的 memory_transcript 用——看「当时逐字原话」,补 ③ 记忆都是提炼过的之缺。
+export async function searchMessagesByKeyword(
+  db: D1Database,
+  input: {
+    namespace: string;
+    keyword: string;
+    startCreatedAt?: string | null;
+    endCreatedAt?: string | null;
+    order?: "asc" | "desc";
+    limit: number;
+    offset: number;
+  }
+): Promise<MessageRecord[]> {
+  // 转义 LIKE 的通配符(% _)和转义符(\),免得关键词含这些字符时被当通配符。中文一般无影响。
+  const escaped = input.keyword.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  let sql = `SELECT id, conversation_id, namespace, role, content, source, created_at
+             FROM messages
+             WHERE namespace = ?
+               AND role IN ('user', 'assistant')
+               AND content LIKE ? ESCAPE '\\'`;
+  const binds: unknown[] = [input.namespace, `%${escaped}%`];
+
+  if (input.startCreatedAt) {
+    sql += ` AND created_at >= ?`;
+    binds.push(input.startCreatedAt);
+  }
+  if (input.endCreatedAt) {
+    sql += ` AND created_at < ?`;
+    binds.push(input.endCreatedAt);
+  }
+
+  sql += ` ORDER BY created_at ${input.order === "desc" ? "DESC" : "ASC"} LIMIT ? OFFSET ?`;
+  binds.push(input.limit, input.offset);
+
+  const result = await db.prepare(sql).bind(...binds).all<MessageRecord>();
+  return result.results ?? [];
+}
+
+// 给定一条台账消息 id，取它「前后各 N 条」上下文。按 created_at 全局时间相邻取
+// (台账基本单源、created_at 是真实对话时序，时间相邻即同一段对话流;不锁 conversation_id
+// 免得历史导入/换 session 把同段对话切成多个 conversation 时上下文在边界断)。
+// memory_transcript 第二步「展开」用:先 keyword 搜到命中那句,再带它的 id 来看前因后果。
+export async function getMessageContextById(
+  db: D1Database,
+  input: { namespace: string; id: string; before: number; after: number }
+): Promise<{ hit: MessageRecord | null; context: MessageRecord[] }> {
+  const hit = await db
+    .prepare(
+      `SELECT id, conversation_id, namespace, role, content, source, created_at
+       FROM messages
+       WHERE namespace = ? AND id = ?`
+    )
+    .bind(input.namespace, input.id)
+    .first<MessageRecord>();
+  if (!hit) return { hit: null, context: [] };
+
+  const beforeRows = await db
+    .prepare(
+      `SELECT id, conversation_id, namespace, role, content, source, created_at
+       FROM messages
+       WHERE namespace = ? AND role IN ('user', 'assistant') AND created_at < ?
+       ORDER BY created_at DESC LIMIT ?`
+    )
+    .bind(input.namespace, hit.created_at, input.before)
+    .all<MessageRecord>();
+
+  const afterRows = await db
+    .prepare(
+      `SELECT id, conversation_id, namespace, role, content, source, created_at
+       FROM messages
+       WHERE namespace = ? AND role IN ('user', 'assistant') AND created_at > ?
+       ORDER BY created_at ASC LIMIT ?`
+    )
+    .bind(input.namespace, hit.created_at, input.after)
+    .all<MessageRecord>();
+
+  const before = (beforeRows.results ?? []).reverse();
+  const after = afterRows.results ?? [];
+  return { hit, context: [...before, hit, ...after] };
+}
+
 export async function saveIngestMessages(
   db: D1Database,
   input: {
