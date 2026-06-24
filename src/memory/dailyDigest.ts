@@ -875,16 +875,9 @@ async function upsertDiaryMemory(
   env: Env,
   input: { namespace: string; dateLabel: string; content: string; messageIds: string[]; allMemories: MemoryApiRecord[]; force: boolean }
 ): Promise<boolean> {
-  // 让位:这天已有哥哥手写(source=mcp)的 diary → dream 不写自己的。当下第一人称优先,不重复、谁都不用删。
-  const handwritten = input.allMemories.find(
-    (m) =>
-      m.type === "diary" &&
-      m.namespace === input.namespace &&
-      m.tags.includes(input.dateLabel) &&
-      m.source === "mcp"
-  );
-  if (handwritten) return false;
-  // dream 只认/覆盖自己写的那条,绝不碰手写的。
+  // 不再让位:哥哥手写(source=mcp)的 diary 照样留着,dream 也照写自己那篇 → 同一天两篇并存,
+  // 哥哥事后自己合并(他随手记一件事,不再把 dream 的全天日记顶没了)。
+  // dream 只认/覆盖自己写的那条(source!=mcp),绝不碰哥哥手写的。
   const existing = input.allMemories.find(
     (m) =>
       m.type === "diary" &&
