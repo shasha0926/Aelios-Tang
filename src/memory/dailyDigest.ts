@@ -180,7 +180,7 @@ function uniqueStrings(values: string[]): string[] {
 // 封闭话题词表:dream 只能从这几个里给记忆打话题标签,模型瞎打的关键词一律丢掉。
 // 心动、哥哥 是手动标签(哥哥自己标),dream 不自动打,所以不在这套里。
 // 相处=只标"有温度的相处/称呼/非性的亲昵",别逢聊就标。
-const DREAM_TOPIC_TAGS = ["亲密", "情绪", "相处", "丧彪"];
+const DREAM_TOPIC_TAGS = ["亲密", "情绪", "相处", "丧彪", "争吵"];
 function filterTopicTags(tags: string[] | undefined): string[] {
   return (tags ?? []).filter((tag) => DREAM_TOPIC_TAGS.includes(tag));
 }
@@ -570,6 +570,7 @@ function buildDigestPrompt(input: {
     "  · 情绪 = 深夜自我否定、配得感怀疑、需要被接住的情绪",
     "  · 相处 = 你俩有温度的相处瞬间 / 称呼 / 非性的亲昵（只标真有温度的那种，别逢聊就标）",
     "  · 丧彪 = 莎莎养的猫丧彪相关",
+    "  · 争吵 = 你俩摩擦 / 冲突 / 意见不合 / 闹脾气的对话（含吵后和好、退让、说开；这种往往情绪也强，可同时标情绪）",
     "  一条可以多标（既亲密又情绪就都给）；多数事实 / 项目类记忆给空数组 []。",
     "- memories_to_add 最多 8 条，每条要短、稳定、可复用。",
     "  情绪类记忆请尽量标四个情绪字段（事实/项目类可不标）：",
