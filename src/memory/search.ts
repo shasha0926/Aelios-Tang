@@ -34,6 +34,10 @@ export function toMemoryApiRecord(record: MemoryRecord, score?: number): MemoryA
     created_at: record.created_at,
     updated_at: record.updated_at,
     expires_at: record.expires_at,
+    feel_intensity: record.feel_intensity,
+    feel_valence: null,
+    feel_resolved: Boolean(record.feel_resolved),
+    feel_note: record.feel_note,
     ...(score === undefined ? {} : { score })
   };
 }
@@ -138,6 +142,9 @@ function toLegacyMemoryRecord(
     created_at: readMetadataString(metadata, "created_at") || now,
     updated_at: readMetadataString(metadata, "updated_at") || now,
     expires_at: null,
+    feel_intensity: null,
+    feel_resolved: 0,
+    feel_note: null,
     score: match.score
   };
 }

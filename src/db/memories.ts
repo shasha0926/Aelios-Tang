@@ -66,7 +66,10 @@ export async function createMemory(db: D1Database, input: CreateMemoryInput): Pr
     recall_count: 0,
     created_at: now,
     updated_at: now,
-    expires_at: input.expiresAt ?? null
+    expires_at: input.expiresAt ?? null,
+    feel_intensity: null,
+    feel_resolved: 0,
+    feel_note: null
   };
 
   await db

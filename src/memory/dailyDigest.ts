@@ -1012,7 +1012,9 @@ export async function runDailyMemoryDigest(
     limit: maxMessages + 1
   });
   if (fetched.length === 0) {
-    await writeCursor(env.DB, cursorName, `done:${cursorState.after ?? startIso}`);
+    // Do not mark an empty day as done. Reflux/backfill can arrive late; if we
+    // write a done cursor here, later messages for this date may never get a
+    // daily_summary/diary unless someone remembers to force rebuild it.
     return { ran: false, mode: "dream", date: dateLabel, reason: "no_messages", startIso, endIso, cursor };
   }
   const hasMoreAfterThisBatch = fetched.length > maxMessages;
