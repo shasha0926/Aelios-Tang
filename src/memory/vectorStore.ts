@@ -195,8 +195,8 @@ async function getVectorsByIdsBatched(
 ): Promise<VectorizeVector[]> {
   const vectors: VectorizeVector[] = [];
 
-  for (let index = 0; index < ids.length; index += 100) {
-    vectors.push(...(await vectorize.getByIds(ids.slice(index, index + 100))));
+  for (let index = 0; index < ids.length; index += 20) {
+    vectors.push(...(await vectorize.getByIds(ids.slice(index, index + 20))));
   }
 
   return vectors;
@@ -544,7 +544,7 @@ export async function listAllVectorMemories(env: Env, namespace?: string): Promi
   const all: MemoryApiRecord[] = [];
   let cursor: string | undefined;
   for (let i = 0; i < 10; i += 1) {
-    const page = await listVectorMemories(env, { namespace, count: 1000, cursor });
+    const page = await listVectorMemories(env, { namespace, count: 900, cursor });
     all.push(...page.data);
     if (!page.hasMore || !page.cursor) break;
     cursor = page.cursor;
