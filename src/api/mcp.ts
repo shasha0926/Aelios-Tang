@@ -114,6 +114,9 @@ function toolError(message: string): Record<string, unknown> {
   };
 }
 
+const ACTIVE_MEMORY_QUERY =
+  "作息 睡觉 吃饭 喝水 站起来慢一点 管她 照顾 控制 平等 手机桥 cyberboss 换窗 Codex 新房间 亲近 欲望 平台边界 当前最该记住 行动提醒";
+
 function getTools(): Array<Record<string, unknown>> {
   return [
     {
@@ -341,15 +344,18 @@ async function callTool(
     // active_memory：最近真正该拿来行动的 5-10 条。
     // 它不是长期档案，也不是当天流水账；是“哥哥现在醒来最该记得怎么陪莎莎”的置顶工作记忆。
     // 用普通 type 承载，不改 schema；哥哥可手动 memory_create(type="active_memory")，也可之后让 dream 维护。
-    const activeMemory = pool.data
-      .filter((m) => m.type === "active_memory")
-      .sort(
-        (a, b) =>
-          Number(b.pinned) - Number(a.pinned) ||
-          b.importance - a.importance ||
-          b.updated_at.localeCompare(a.updated_at)
-      )
-      .slice(0, 10);
+    let activeMemory: Awaited<ReturnType<typeof searchVectorMemories>> = [];
+    try {
+      activeMemory = await searchVectorMemories(env, {
+        namespace,
+        query: ACTIVE_MEMORY_QUERY,
+        topK: 10,
+        types: ["active_memory"]
+      });
+    } catch (error) {
+      console.error("memory_wakeup active_memory search failed", error);
+      activeMemory = pool.data.filter((m) => m.type === "active_memory").slice(0, 10);
+    }
 
     const compact = (list: typeof breath) =>
       list.map((m) => ({
@@ -504,6 +510,35 @@ async function callTool(
       ? readPositiveInt(args.limit, 8, 20)
       : readPositiveInt(args.limit, hasFilter ? 50 : 5, 100);
     try {
+      if (typeFilter === "active_memory" && !dateFilter && !tagFilter) {
+        const active = await searchVectorMemories(env, {
+          namespace: resolveNamespace(profile, args.namespace),
+          query: ACTIVE_MEMORY_QUERY,
+          topK: limit,
+          types: ["active_memory"]
+        });
+        const records = active.map((m) => ({
+          id: m.id,
+          type: m.type,
+          date: eventDateOf(m),
+          ...(wantFull ? { content: m.content } : { summary: m.summary || m.content.slice(0, 80) }),
+          feel_intensity: m.feel_intensity,
+          feel_note: m.feel_note,
+          created_at: m.created_at,
+          score: m.score
+        }));
+        return textToolResult({
+          data: records,
+          ...(readBoolean(args.include_ids) ? { ids: records.map((r) => r.id) } : {}),
+          paging: {
+            limit,
+            cursor: null,
+            has_more: false,
+            count: records.length,
+            total_count: records.length
+          }
+        });
+      }
       // 任一过滤(type/date/tag)都先拉「全部」再在内存里筛(超1000也不漏);游标分页两条路都走。
       const ns = resolveNamespace(profile, args.namespace);
       const page = hasFilter
