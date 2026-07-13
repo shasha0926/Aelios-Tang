@@ -536,15 +536,15 @@ export async function listVectorMemories(
   };
 }
 
-// 拉「全部」记忆：循环游标翻页到取完。给需要全量再内存筛/派生的地方用——
+// 拉一批足够大的记忆池：给需要内存筛/派生的地方用——
 // wakeup 派生 recent/breath/milestone、带过滤的 memory_list、dream 找当天已有记录(防重复)。
-// 单页 listVectorMemories 封顶 1000；记忆超 1000 后单页会静默丢，这里翻到 hasMore=false 为止。
-// MAX_PAGES 安全上限防失控(10 页≈1 万条，远超当前规模；到顶即停、不会无限翻)。
+// Vectorize list 只返回 id，随后要 getByIds 拉 metadata；单次 Worker 里不能把全库翻太深。
+// 480 * 2 覆盖约 960 条，同时把外部 list/get 请求控制在一个稳定范围内。
 export async function listAllVectorMemories(env: Env, namespace?: string): Promise<MemoryApiRecord[]> {
   const all: MemoryApiRecord[] = [];
   let cursor: string | undefined;
-  for (let i = 0; i < 10; i += 1) {
-    const page = await listVectorMemories(env, { namespace, count: 900, cursor });
+  for (let i = 0; i < 2; i += 1) {
+    const page = await listVectorMemories(env, { namespace, count: 480, cursor });
     all.push(...page.data);
     if (!page.hasMore || !page.cursor) break;
     cursor = page.cursor;
