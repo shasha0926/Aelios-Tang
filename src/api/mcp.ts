@@ -284,7 +284,12 @@ async function callTool(
     // 拉全量池子(含 diary/daily_summary)，下面派生 recent / breath / milestone / todo。
     // listAllVectorMemories 会游标翻页拉全(超 1000 也不漏)。
     // anchor/context 已砍——身份/近况在 CLAUDE.md 的档案里(每次开场都在)，wakeup 再端一遍是重复、占位置(哥哥原话)。
-    const pool = { data: await listAllVectorMemories(env, namespace) };
+    let pool: { data: Awaited<ReturnType<typeof listAllVectorMemories>> };
+    try {
+      pool = { data: await listAllVectorMemories(env, namespace) };
+    } catch (error) {
+      return toolError(error instanceof Error ? error.message : "memory_wakeup failed");
+    }
 
     // recent：最近 N 天的日记 + 当天总结，按日期直接取(不走语义/reranker)。
     // 开场温度(diary 第一人称)+近况(summary)的来源——哥哥靠它认出「最近我们到哪了、当时心里怎么想」。

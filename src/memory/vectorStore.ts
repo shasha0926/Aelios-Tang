@@ -195,8 +195,8 @@ async function getVectorsByIdsBatched(
 ): Promise<VectorizeVector[]> {
   const vectors: VectorizeVector[] = [];
 
-  for (let index = 0; index < ids.length; index += 20) {
-    vectors.push(...(await vectorize.getByIds(ids.slice(index, index + 20))));
+  for (let index = 0; index < ids.length; index += 100) {
+    vectors.push(...(await vectorize.getByIds(ids.slice(index, index + 100))));
   }
 
   return vectors;
