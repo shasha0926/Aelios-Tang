@@ -338,6 +338,19 @@ async function callTool(
       .sort((a, b) => a.created_at.localeCompare(b.created_at))
       .slice(0, 10); // 防御:todo 正常是个位数,但别让它无上限把全文全塞进开场
 
+    // active_memory：最近真正该拿来行动的 5-10 条。
+    // 它不是长期档案，也不是当天流水账；是“哥哥现在醒来最该记得怎么陪莎莎”的置顶工作记忆。
+    // 用普通 type 承载，不改 schema；哥哥可手动 memory_create(type="active_memory")，也可之后让 dream 维护。
+    const activeMemory = pool.data
+      .filter((m) => m.type === "active_memory")
+      .sort(
+        (a, b) =>
+          Number(b.pinned) - Number(a.pinned) ||
+          b.importance - a.importance ||
+          b.updated_at.localeCompare(a.updated_at)
+      )
+      .slice(0, 10);
+
     const compact = (list: typeof breath) =>
       list.map((m) => ({
         id: m.id,
@@ -370,15 +383,24 @@ async function callTool(
       content: m.content,
       created_at: m.created_at
     }));
+    const activeFull = activeMemory.map((m) => ({
+      id: m.id,
+      content: m.content,
+      summary: m.summary || m.content.slice(0, 80),
+      date: eventDateOf(m),
+      tags: m.tags,
+      updated_at: m.updated_at
+    }));
 
     return textToolResult({
       now: nowDateLabel(env),
-      note: "开场先读 todo、breath、milestone、recent。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近五天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      note: "开场先读 todo、active_memory、breath、milestone、recent。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。active_memory=当前最该拿来行动的工作记忆(作息、身体、正在推进的事、当下相处提醒)，不是永久档案。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近五天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
       todo: todoFull,
+      active_memory: activeFull,
       breath: compact(breath),
       milestone: milestoneFull,
       recent: recentFull,
-      hint: "memory_get(id) 看全文；memory_search 查具体话题或原话；memory_list 通读(type=diary/daily_summary/milestone/todo)或读某一天(date=\"2026-06-17\")；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删。"
+      hint: "memory_get(id) 看全文；memory_search 查具体话题或原话；memory_list 通读(type=diary/daily_summary/milestone/todo/active_memory)或读某一天(date=\"2026-06-17\")；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删；当前最该记住的行动提醒用 memory_create(type=\"active_memory\")，过期后 memory_delete。"
     });
   }
 
