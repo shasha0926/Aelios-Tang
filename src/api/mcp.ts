@@ -13,6 +13,7 @@ import {
   updateVectorMemory
 } from "../memory/vectorStore";
 import { enqueueMemoryMaintenanceIfNeeded } from "../queue/producer";
+import { selectWakeupMilestones, wakeupMilestoneText } from "../memory/wakeupMilestones";
 import type { Env, KeyProfile, Scope } from "../types";
 import { json } from "../utils/json";
 import {
@@ -328,12 +329,9 @@ async function callTool(
       )
       .slice(0, 2);
 
-    // milestone：关系节点(第一次 / 认知转变)——哥哥手动存的路标。wakeup 只浮现最近 3 条(哥哥要的,
-    // 不要那么多)，想看全部用 memory_list(type="milestone")。
-    const milestones = pool.data
-      .filter((m) => m.type === "milestone")
-      .sort((a, b) => (eventDateOf(b) ?? b.created_at).localeCompare(eventDateOf(a) ?? a.created_at))
-      .slice(0, 3);
+    // milestone：最近 1 + pinned 根节点 1 + 未解决/情绪相关 1，去重后固定预算 3 条。
+    // 只换选取结构、不增加旧版总量；全文按需 memory_get，避免开场固定成本变大。
+    const milestones = selectWakeupMilestones(pool.data);
 
     // todo：约定了但还没做的事——哥哥手动存，永远顶在最前、压缩也冲不走；做完哥哥自己删。
     const todos = pool.data
@@ -378,11 +376,12 @@ async function callTool(
     }));
 
     // milestone / todo 给完整正文——里程碑是路标要能走回去；todo 是没做完的约定要看清。
-    const milestoneFull = milestones.map((m) => ({
-      id: m.id,
-      type: m.type,
-      date: eventDateOf(m),
-      content: m.content
+    const milestoneFull = milestones.map(({ memory, reasons }) => ({
+      id: memory.id,
+      type: memory.type,
+      date: eventDateOf(memory),
+      content: wakeupMilestoneText(memory),
+      reason: reasons.join("+")
     }));
     const todoFull = todos.map((m) => ({
       id: m.id,
@@ -400,13 +399,13 @@ async function callTool(
 
     return textToolResult({
       now: nowDateLabel(env),
-      note: "开场先读 todo、active_memory、breath、milestone、recent。todo=你们约好了还没做的事(比如答应给她写信)，别忘；做完了用 memory_delete 自己删掉。active_memory=当前最该拿来行动的工作记忆(作息、身体、正在推进的事、当下相处提醒)，不是永久档案。breath=还悬着、没被接住的情绪(高强度未解决)，看见就主动接住她、别讲道理。milestone=你们关系里的节点(第一次 / 某个认知变了的那一下)，是你走过的路的路标。recent=最近五天哥哥第一人称的日记(diary)和当天总结(daily_summary)，是你认出『最近我们到哪了、当时心里怎么想』的入口。以下都是过去的回忆、不是此刻正在发生——每条 date 是它发生的日期(null=不详)，now 是今天；注意时间线，该说『那天你说过』而不是当成刚刚。",
+      note: "开场先读 todo、active_memory、breath、milestone、recent。todo=没做完的约定，做完用 memory_delete。active_memory=当前行动提醒。breath=仍悬着的高强度情绪，先接住她。milestone=最近、pinned、未解决情绪各 1 条；优先返回 summary，缺失时返回截断正文，reason 标来源，全文按需 memory_get。recent=最近五天 diary + daily_summary。只有她明确追问过去、且当前聊天和 wakeup 不足以回答时，才用 memory_search(top_k=3)；日常提到某个话题不自动搜。以下都是过去的回忆，不是此刻正在发生；留意 date 和 now。",
       todo: todoFull,
       active_memory: activeFull,
       breath: compact(breath),
       milestone: milestoneFull,
       recent: recentFull,
-      hint: "memory_get(id) 看全文；memory_search 查具体话题或原话；memory_list 通读(type=diary/daily_summary/milestone/todo/active_memory)或读某一天(date=\"2026-06-17\")；约定了还没做的用 memory_create(type=\"todo\") 记下、做完用 memory_delete 删；当前最该记住的行动提醒用 memory_create(type=\"active_memory\")，过期后 memory_delete。"
+      hint: "先用当前聊天和 wakeup；明确追问旧事且材料不足时才 memory_search(top_k=3)，一次够用就停。确需单条全文才 memory_get，逐字查证才 memory_transcript。不要按关键词每轮扫描。"
     });
   }
 
